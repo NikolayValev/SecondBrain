@@ -170,3 +170,8 @@ OLLAMA_EMBEDDING_MODEL=nomic-embed-text
 2. **Ollama**: Must have Ollama installed and running locally. See [ollama.ai](https://ollama.ai).
 3. **OpenAI Base URL**: Can be modified to use Azure OpenAI or compatible proxies.
 4. **Validation**: Always call `validate_llm_config()` at application startup.
+
+## Related Documentation
+
+- [RAG Guide](RAG_GUIDE.md) - How to use the RAG Q&A system
+- [API Reference](API_REFERENCE.md) - Complete API documentation

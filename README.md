@@ -1,6 +1,6 @@
 # Second Brain
 
-A local daemon that indexes an Obsidian vault and exposes a REST API for search and file access. Designed for Windows, with future LLM/RAG integration in mind.
+A local daemon that indexes an Obsidian vault and exposes a REST API for search, file access, and **RAG-powered Q&A**. Designed for Windows, with full LLM integration.
 
 ## Features
 
@@ -9,6 +9,9 @@ A local daemon that indexes an Obsidian vault and exposes a REST API for search 
 - **Markdown Parsing**: Extracts titles, headings, tags, and links
 - **REST API**: FastAPI-based endpoints for integration
 - **Incremental Indexing**: Only re-indexes changed files
+- **RAG Q&A**: Ask questions about your notes using AI (OpenAI, Gemini, or Ollama)
+- **Vector Search**: Semantic similarity search using embeddings
+- **Multi-Provider LLM**: Supports OpenAI, Google Gemini, and local Ollama models
 
 ## Requirements
 
@@ -136,6 +139,35 @@ POST /reindex?full=false
 ```
 Trigger a manual reindex. Use `full=true` for complete rescan.
 
+### Ask Question (RAG)
+```
+POST /ask
+Content-Type: application/json
+
+{
+  "question": "What are my notes about Python?",
+  "include_sources": true
+}
+```
+Ask a question using RAG. Returns an AI-generated answer with source references.
+
+**Example:**
+```powershell
+curl -X POST "http://127.0.0.1:8000/ask" -H "Content-Type: application/json" -d '{"question": "What did I write about productivity?"}'
+```
+
+### Embedding Statistics
+```
+GET /embeddings/stats
+```
+Get counts of chunks and embeddings.
+
+### Generate Embeddings
+```
+POST /embeddings/generate?limit=100
+```
+Generate embeddings for pending chunks. Run after indexing to enable RAG.
+
 ## API Documentation
 
 FastAPI provides interactive documentation at:
@@ -148,16 +180,24 @@ FastAPI provides interactive documentation at:
 SecondBrain/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py       # FastAPI application
-│   ├── config.py     # Configuration management
-│   ├── db.py         # SQLite database with FTS5
-│   ├── parser.py     # Markdown parsing
-│   ├── indexer.py    # File indexing logic
-│   └── watcher.py    # File system watcher
-├── .env              # Environment configuration
-├── .env.example      # Example configuration
-├── requirements.txt  # Python dependencies
-└── README.md         # This file
+│   ├── main.py         # FastAPI application & endpoints
+│   ├── config.py       # Configuration management
+│   ├── db.py           # SQLite database with FTS5
+│   ├── parser.py       # Markdown parsing
+│   ├── indexer.py      # File indexing logic
+│   ├── watcher.py      # File system watcher
+│   ├── llm.py          # LLM provider abstraction
+│   ├── chunker.py      # Text chunking for embeddings
+│   ├── embeddings.py   # Embedding generation & storage
+│   ├── vector_search.py # Cosine similarity search
+│   └── rag.py          # RAG pipeline orchestration
+├── docs/
+│   └── LLM_CONFIGURATION.md  # LLM setup guide
+├── tests/              # Unit tests
+├── .env                # Environment configuration
+├── .env.example        # Example configuration
+├── requirements.txt    # Python dependencies
+└── README.md           # This file
 ```
 
 ## Database Schema
@@ -169,6 +209,8 @@ The SQLite database includes:
 - **tags**: Unique tag names
 - **file_tags**: File-tag associations
 - **links**: Outbound links from files
+- **chunks**: Text chunks for embedding
+- **embeddings**: Vector embeddings (stored as BLOB)
 - **fts_content**: FTS5 virtual table for full-text search
 
 ## Configuration Options
@@ -182,19 +224,97 @@ The SQLite database includes:
 | `API_PORT` | `8000` | API server port |
 | `LOG_LEVEL` | `INFO` | Logging verbosity |
 
+### LLM Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_PROVIDER` | `openai` | LLM provider: `openai`, `gemini`, or `ollama` |
+| `LLM_TEMPERATURE` | `0.7` | Generation temperature (0.0-1.0) |
+| `LLM_MAX_TOKENS` | `4096` | Maximum tokens in response |
+
+#### OpenAI
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OPENAI_API_KEY` | (required) | Your OpenAI API key |
+| `OPENAI_MODEL` | `gpt-4o` | Chat model |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
+
+#### Google Gemini
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GEMINI_API_KEY` | (required) | Your Google AI API key |
+| `GEMINI_MODEL` | `gemini-1.5-pro` | Chat model |
+| `GEMINI_EMBEDDING_MODEL` | `text-embedding-004` | Embedding model |
+
+#### Ollama (Local)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `OLLAMA_MODEL` | `llama3` | Chat model |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
+
+See [docs/LLM_CONFIGURATION.md](docs/LLM_CONFIGURATION.md) for detailed setup instructions.
+
+## Quick Start with RAG
+
+1. **Configure LLM** - Add your API key to `.env`:
+   ```ini
+   LLM_PROVIDER=openai
+   OPENAI_API_KEY=sk-your-key-here
+   ```
+
+2. **Start server** - Index your vault:
+   ```powershell
+   python -m uvicorn app.main:app --reload
+   ```
+
+3. **Generate embeddings** - Enable semantic search:
+   ```powershell
+   curl -X POST "http://127.0.0.1:8000/embeddings/generate?limit=500"
+   ```
+
+4. **Ask questions** - Query your knowledge base:
+   ```powershell
+   curl -X POST "http://127.0.0.1:8000/ask" -H "Content-Type: application/json" -d '{"question": "What are my main project ideas?"}'
+   ```
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      FastAPI Server                          │
+├─────────────────────────────────────────────────────────────┤
+│  /search    /ask     /file    /embeddings/generate          │
+└──────┬────────┬────────┬──────────────┬─────────────────────┘
+       │        │        │              │
+       ▼        ▼        ▼              ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────────┐
+│   FTS5   │ │   RAG    │ │ Database │ │  Embedding Service   │
+│  Search  │ │ Service  │ │  (db.py) │ │   (embeddings.py)    │
+└──────────┘ └────┬─────┘ └──────────┘ └──────────┬───────────┘
+                  │                               │
+                  ▼                               ▼
+           ┌──────────────┐              ┌───────────────────┐
+           │Vector Search │              │   LLM Provider    │
+           │(vector_search)│              │ OpenAI/Gemini/   │
+           └──────┬───────┘              │     Ollama        │
+                  │                      └───────────────────┘
+                  ▼
+           ┌──────────────┐
+           │  LLM Chat    │
+           │  Generation  │
+           └──────────────┘
+```
+
 ## Phase 2 Roadmap
 
-This codebase is structured to support future enhancements:
+Future enhancements planned:
 
-- **Embedding Generation**: Add a module for generating text embeddings
-- **Vector Database**: Store embeddings in a vector database (e.g., ChromaDB, FAISS)
-- **RAG Endpoint**: Implement `/ask` endpoint for LLM-powered Q&A
-
-### Extension Points
-
-- `app/embeddings.py` - For embedding model integration
-- `app/vector_db.py` - For vector storage
-- `app/rag.py` - For RAG pipeline
+- **Auto-embed on index**: Automatically generate embeddings when files are indexed
+- **Conversation history**: Multi-turn conversations with context
+- **Streaming responses**: Stream LLM output for better UX
+- **FAISS integration**: Faster vector search for large vaults
+- **Web UI**: Simple web interface for Q&A
 
 ## Troubleshooting
 
