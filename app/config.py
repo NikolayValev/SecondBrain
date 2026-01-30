@@ -35,6 +35,30 @@ class Config:
     # File extensions to index
     MARKDOWN_EXTENSIONS: tuple = (".md", ".markdown")
     
+    # LLM Provider settings
+    # Supported providers: "openai", "gemini", "ollama"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
+    
+    # OpenAI settings
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    OPENAI_EMBEDDING_MODEL: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    
+    # Google Gemini settings
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
+    GEMINI_EMBEDDING_MODEL: str = os.getenv("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
+    
+    # Ollama settings (local models)
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
+    OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+    
+    # Common LLM settings
+    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+    
     @classmethod
     def validate(cls) -> None:
         """Validate required configuration."""
@@ -45,6 +69,59 @@ class Config:
             )
         if not cls.VAULT_PATH.is_dir():
             raise ValueError(f"VAULT_PATH must be a directory: {cls.VAULT_PATH}")
+    
+    @classmethod
+    def validate_llm_config(cls) -> None:
+        """Validate LLM provider configuration."""
+        provider = cls.LLM_PROVIDER.lower()
+        
+        if provider not in ("openai", "gemini", "ollama"):
+            raise ValueError(
+                f"LLM_PROVIDER must be one of: openai, gemini, ollama. "
+                f"Got: {provider}"
+            )
+        
+        if provider == "openai" and not cls.OPENAI_API_KEY:
+            raise ValueError("OPENAI_API_KEY must be set when using OpenAI provider")
+        
+        if provider == "gemini" and not cls.GEMINI_API_KEY:
+            raise ValueError("GEMINI_API_KEY must be set when using Gemini provider")
+    
+    @classmethod
+    def get_llm_config(cls) -> dict:
+        """Get configuration for the active LLM provider."""
+        provider = cls.LLM_PROVIDER.lower()
+        
+        base_config = {
+            "provider": provider,
+            "temperature": cls.LLM_TEMPERATURE,
+            "max_tokens": cls.LLM_MAX_TOKENS,
+        }
+        
+        if provider == "openai":
+            return {
+                **base_config,
+                "api_key": cls.OPENAI_API_KEY,
+                "model": cls.OPENAI_MODEL,
+                "base_url": cls.OPENAI_BASE_URL,
+                "embedding_model": cls.OPENAI_EMBEDDING_MODEL,
+            }
+        elif provider == "gemini":
+            return {
+                **base_config,
+                "api_key": cls.GEMINI_API_KEY,
+                "model": cls.GEMINI_MODEL,
+                "embedding_model": cls.GEMINI_EMBEDDING_MODEL,
+            }
+        elif provider == "ollama":
+            return {
+                **base_config,
+                "base_url": cls.OLLAMA_BASE_URL,
+                "model": cls.OLLAMA_MODEL,
+                "embedding_model": cls.OLLAMA_EMBEDDING_MODEL,
+            }
+        
+        raise ValueError(f"Unknown LLM provider: {provider}")
 
 
 # Singleton config instance
