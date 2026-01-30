@@ -17,6 +17,8 @@ from app.config import config
 from app.db import db
 from app.indexer import indexer
 from app.watcher import watcher
+from app.rag import rag_service
+from app.embeddings import embedding_service
 
 # Configure logging
 logging.basicConfig(
@@ -74,6 +76,35 @@ class ErrorResponse(BaseModel):
     """Error response."""
     error: str
     detail: Optional[str] = None
+
+
+class AskRequest(BaseModel):
+    """Request body for /ask endpoint."""
+    question: str
+    include_sources: bool = True
+
+
+class SourceInfo(BaseModel):
+    """Source information for RAG response."""
+    file_path: str
+    file_title: str
+    section: Optional[str] = None
+    similarity: float
+
+
+class AskResponse(BaseModel):
+    """Response from RAG-powered Q&A."""
+    answer: str
+    sources: list[SourceInfo]
+    query: str
+
+
+class EmbeddingStatsResponse(BaseModel):
+    """Embedding statistics response."""
+    chunk_count: int
+    embedding_count: int
+    files_with_embeddings: int
+    pending_chunks: int
 
 
 @asynccontextmanager
@@ -289,6 +320,93 @@ async def trigger_reindex(full: bool = Query(False, description="Perform full re
     except Exception as e:
         logger.error(f"Reindex error: {e}")
         raise HTTPException(status_code=500, detail=f"Reindex failed: {str(e)}")
+
+
+# RAG Endpoints
+
+@app.post("/ask", response_model=AskResponse, tags=["RAG"])
+async def ask_question(request: AskRequest):
+    """
+    Ask a question using RAG (Retrieval-Augmented Generation).
+    
+    Searches the knowledge base for relevant content and uses an LLM
+    to generate an answer based on the retrieved context.
+    
+    Requires LLM configuration (OPENAI_API_KEY, GEMINI_API_KEY, or Ollama).
+    """
+    if not request.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+    
+    try:
+        response = await rag_service.ask(
+            question=request.question,
+            include_sources=request.include_sources,
+        )
+        
+        return AskResponse(
+            answer=response.answer,
+            sources=[
+                SourceInfo(
+                    file_path=s["file_path"],
+                    file_title=s["file_title"],
+                    section=s.get("section"),
+                    similarity=s["similarity"],
+                )
+                for s in response.sources
+            ],
+            query=response.query,
+        )
+    except ValueError as e:
+        logger.error(f"RAG configuration error: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"LLM not configured: {str(e)}. Set OPENAI_API_KEY, GEMINI_API_KEY, or configure Ollama."
+        )
+    except Exception as e:
+        logger.error(f"RAG error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
+
+
+@app.get("/embeddings/stats", response_model=EmbeddingStatsResponse, tags=["RAG"])
+async def get_embedding_stats():
+    """
+    Get embedding statistics.
+    Shows how many chunks have been embedded.
+    """
+    stats = db.get_embedding_stats()
+    return EmbeddingStatsResponse(**stats)
+
+
+@app.post("/embeddings/generate", tags=["RAG"])
+async def generate_embeddings(
+    limit: int = Query(100, ge=1, le=1000, description="Maximum chunks to process")
+):
+    """
+    Generate embeddings for pending chunks.
+    
+    Processes chunks that don't have embeddings yet.
+    Run this after indexing to enable RAG functionality.
+    """
+    try:
+        success, failed = await embedding_service.process_pending_chunks(limit=limit)
+        
+        stats = db.get_embedding_stats()
+        
+        return {
+            "status": "completed",
+            "processed": success,
+            "failed": failed,
+            "pending_remaining": stats["pending_chunks"],
+        }
+    except ValueError as e:
+        logger.error(f"Embedding configuration error: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"LLM not configured: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Embedding generation error: {e}")
+        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {str(e)}")
 
 
 # Exception handlers

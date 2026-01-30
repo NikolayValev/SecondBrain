@@ -110,6 +110,33 @@ class Database:
                 )
             """)
             
+            # Chunks table - text chunks for embedding
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS chunks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    file_id INTEGER NOT NULL,
+                    section_id INTEGER,
+                    chunk_index INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    token_count INTEGER NOT NULL,
+                    FOREIGN KEY (file_id) REFERENCES files(id) ON DELETE CASCADE,
+                    FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE
+                )
+            """)
+            
+            # Embeddings table - vector embeddings for chunks
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS embeddings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chunk_id INTEGER UNIQUE NOT NULL,
+                    embedding BLOB NOT NULL,
+                    model TEXT NOT NULL,
+                    dimensions INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+                )
+            """)
+            
             # Metadata table for tracking
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -124,6 +151,9 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_file_tags_tag_id ON file_tags(tag_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_links_from_file_id ON links(from_file_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_links_to_path ON links(to_path)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_section_id ON chunks(section_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON embeddings(chunk_id)")
             
             # FTS5 virtual table for full-text search
             # Standalone FTS table (not content-synced) for flexibility
@@ -319,6 +349,118 @@ class Database:
             cur.execute("SELECT content FROM files WHERE path = ?", (path,))
             row = cur.fetchone()
             return row["content"] if row else None
+    
+    # Chunk management methods
+    
+    def add_chunk(
+        self, 
+        file_id: int, 
+        chunk_index: int, 
+        content: str, 
+        token_count: int,
+        section_id: Optional[int] = None
+    ) -> int:
+        """Add a text chunk. Returns chunk ID."""
+        with self.cursor() as cur:
+            cur.execute("""
+                INSERT INTO chunks (file_id, section_id, chunk_index, content, token_count)
+                VALUES (?, ?, ?, ?, ?)
+            """, (file_id, section_id, chunk_index, content, token_count))
+            return cur.lastrowid
+    
+    def get_chunks_by_file(self, file_id: int) -> list[dict]:
+        """Get all chunks for a file."""
+        with self.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM chunks WHERE file_id = ? ORDER BY chunk_index
+            """, (file_id,))
+            return [dict(row) for row in cur.fetchall()]
+    
+    def get_chunks_without_embeddings(self, limit: int = 100) -> list[dict]:
+        """Get chunks that don't have embeddings yet."""
+        with self.cursor() as cur:
+            cur.execute("""
+                SELECT c.*, f.path as file_path, f.title as file_title
+                FROM chunks c
+                JOIN files f ON c.file_id = f.id
+                LEFT JOIN embeddings e ON c.id = e.chunk_id
+                WHERE e.id IS NULL
+                LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cur.fetchall()]
+    
+    def clear_file_chunks(self, file_id: int) -> None:
+        """Delete all chunks for a file (embeddings cascade deleted)."""
+        with self.cursor() as cur:
+            cur.execute("DELETE FROM chunks WHERE file_id = ?", (file_id,))
+    
+    # Embedding management methods
+    
+    def add_embedding(
+        self, 
+        chunk_id: int, 
+        embedding: bytes, 
+        model: str, 
+        dimensions: int
+    ) -> int:
+        """Add an embedding for a chunk. Returns embedding ID."""
+        from datetime import datetime
+        with self.cursor() as cur:
+            cur.execute("""
+                INSERT INTO embeddings (chunk_id, embedding, model, dimensions, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(chunk_id) DO UPDATE SET
+                    embedding = excluded.embedding,
+                    model = excluded.model,
+                    dimensions = excluded.dimensions,
+                    created_at = excluded.created_at
+            """, (chunk_id, embedding, model, dimensions, datetime.utcnow().isoformat()))
+            return cur.lastrowid
+    
+    def get_all_embeddings(self) -> list[dict]:
+        """Get all embeddings with chunk and file info for vector search."""
+        with self.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    e.id as embedding_id,
+                    e.chunk_id,
+                    e.embedding,
+                    e.dimensions,
+                    c.content as chunk_content,
+                    c.chunk_index,
+                    f.id as file_id,
+                    f.path as file_path,
+                    f.title as file_title,
+                    s.heading as section_heading
+                FROM embeddings e
+                JOIN chunks c ON e.chunk_id = c.id
+                JOIN files f ON c.file_id = f.id
+                LEFT JOIN sections s ON c.section_id = s.id
+            """)
+            return [dict(row) for row in cur.fetchall()]
+    
+    def get_embedding_stats(self) -> dict:
+        """Get embedding statistics."""
+        with self.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as count FROM chunks")
+            chunk_count = cur.fetchone()["count"]
+            
+            cur.execute("SELECT COUNT(*) as count FROM embeddings")
+            embedding_count = cur.fetchone()["count"]
+            
+            cur.execute("""
+                SELECT COUNT(DISTINCT file_id) as count 
+                FROM chunks c 
+                JOIN embeddings e ON c.id = e.chunk_id
+            """)
+            files_with_embeddings = cur.fetchone()["count"]
+            
+            return {
+                "chunk_count": chunk_count,
+                "embedding_count": embedding_count,
+                "files_with_embeddings": files_with_embeddings,
+                "pending_chunks": chunk_count - embedding_count
+            }
 
 
 # Singleton database instance
