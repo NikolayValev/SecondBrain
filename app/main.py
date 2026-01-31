@@ -21,6 +21,8 @@ from app.watcher import watcher
 from app.rag import rag_service
 from app.embeddings import embedding_service
 from app.inbox_processor import inbox_processor, InboxConfig, create_default_config
+from app.sync_service import get_sync_service, run_sync
+from app.db_postgres import get_postgres_db, close_postgres_db
 
 # Configure logging
 logging.basicConfig(
@@ -132,6 +134,59 @@ class EmbeddingStatsResponse(BaseModel):
     embedding_count: int
     files_with_embeddings: int
     pending_chunks: int
+
+
+class SyncRequest(BaseModel):
+    """Request for PostgreSQL sync."""
+    mode: str = "incremental"  # "full" or "incremental"
+
+
+class SyncResponse(BaseModel):
+    """Response from PostgreSQL sync."""
+    files_added: int
+    files_updated: int
+    files_deleted: int
+    sections: int
+    tags: int
+    links: int
+    chunks: int
+    embeddings: int
+    errors: list[dict]
+    status: str
+
+
+class PostgresStatsResponse(BaseModel):
+    """PostgreSQL database statistics."""
+    file_count: int
+    section_count: int
+    tag_count: int
+    link_count: int
+    chunk_count: int
+    embedding_count: int
+    last_sync: Optional[str]
+
+
+class ConversationCreate(BaseModel):
+    """Request to create a conversation."""
+    session_id: Optional[str] = None
+    title: Optional[str] = None
+
+
+class MessageCreate(BaseModel):
+    """Request to add a message."""
+    role: str
+    content: str
+    sources: Optional[list[dict]] = None
+
+
+class ConversationResponse(BaseModel):
+    """Conversation with messages."""
+    id: int
+    session_id: Optional[str]
+    title: Optional[str]
+    created_at: str
+    updated_at: str
+    messages: list[dict]
 
 
 @asynccontextmanager
@@ -465,6 +520,221 @@ async def list_inbox_files():
             for f in files
         ]
     }
+
+
+# =============================================================================
+# PostgreSQL Sync Endpoints
+# =============================================================================
+
+@app.post("/sync", response_model=SyncResponse, tags=["Sync"])
+async def sync_to_postgres(request: SyncRequest):
+    """
+    Synchronize SQLite data to PostgreSQL.
+    
+    This enables a Next.js frontend to access the Second Brain data via Prisma.
+    
+    Modes:
+    - incremental: Only sync files changed since last sync (faster)
+    - full: Clear and rebuild all PostgreSQL data (slower but ensures consistency)
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured. Set DATABASE_URL or POSTGRES_URL environment variable."
+        )
+    
+    try:
+        if request.mode not in ("full", "incremental"):
+            raise HTTPException(
+                status_code=400,
+                detail="Mode must be 'full' or 'incremental'"
+            )
+        
+        stats = await run_sync(mode=request.mode)
+        
+        return SyncResponse(
+            files_added=stats['files_added'],
+            files_updated=stats['files_updated'],
+            files_deleted=stats['files_deleted'],
+            sections=stats.get('sections', 0),
+            tags=stats.get('tags', 0),
+            links=stats.get('links', 0),
+            chunks=stats.get('chunks', 0),
+            embeddings=stats.get('embeddings', 0),
+            errors=stats.get('errors', []),
+            status='completed' if not stats.get('errors') else 'completed_with_errors'
+        )
+    except Exception as e:
+        logger.error(f"Sync error: {e}")
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+@app.get("/sync/stats", response_model=PostgresStatsResponse, tags=["Sync"])
+async def postgres_stats():
+    """
+    Get PostgreSQL database statistics.
+    
+    Returns counts and last sync time for the PostgreSQL database.
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured. Set DATABASE_URL or POSTGRES_URL environment variable."
+        )
+    
+    try:
+        pg_db = get_postgres_db()
+        stats = await pg_db.get_stats()
+        
+        return PostgresStatsResponse(
+            file_count=stats['file_count'],
+            section_count=stats['section_count'],
+            tag_count=stats['tag_count'],
+            link_count=stats['link_count'],
+            chunk_count=stats['chunk_count'],
+            embedding_count=stats['embedding_count'],
+            last_sync=stats.get('last_sync')
+        )
+    except Exception as e:
+        logger.error(f"PostgreSQL stats error: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get stats: {str(e)}")
+
+
+@app.post("/sync/file", tags=["Sync"])
+async def sync_single_file(path: str = Query(..., description="File path to sync")):
+    """
+    Sync a single file to PostgreSQL.
+    
+    Use this for on-demand syncing when a file is updated.
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured."
+        )
+    
+    try:
+        sync_service = get_sync_service()
+        success = await sync_service.sync_file(path)
+        
+        if success:
+            return {"status": "synced", "path": path}
+        else:
+            raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    except Exception as e:
+        logger.error(f"File sync error: {e}")
+        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+
+
+# =============================================================================
+# Conversation Endpoints (for Next.js chat interface)
+# =============================================================================
+
+@app.post("/conversations", tags=["Conversations"])
+async def create_conversation(request: ConversationCreate):
+    """
+    Create a new conversation.
+    
+    Used by Next.js frontend to track chat sessions.
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured."
+        )
+    
+    try:
+        pg_db = get_postgres_db()
+        conv_id = await pg_db.create_conversation(
+            session_id=request.session_id,
+            title=request.title
+        )
+        
+        return {"id": conv_id, "status": "created"}
+    except Exception as e:
+        logger.error(f"Create conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/conversations/{conversation_id}", tags=["Conversations"])
+async def get_conversation(conversation_id: int):
+    """
+    Get a conversation with all messages.
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured."
+        )
+    
+    try:
+        pg_db = get_postgres_db()
+        conv = await pg_db.get_conversation(conversation_id)
+        
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return conv
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get conversation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/conversations/{conversation_id}/messages", tags=["Conversations"])
+async def add_message(conversation_id: int, request: MessageCreate):
+    """
+    Add a message to a conversation.
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured."
+        )
+    
+    try:
+        pg_db = get_postgres_db()
+        message_id = await pg_db.add_message(
+            conversation_id=conversation_id,
+            role=request.role,
+            content=request.content,
+            sources=request.sources
+        )
+        
+        return {"id": message_id, "status": "added"}
+    except Exception as e:
+        logger.error(f"Add message error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/conversations", tags=["Conversations"])
+async def list_conversations(
+    session_id: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100)
+):
+    """
+    List recent conversations.
+    
+    Optionally filter by session_id for user-specific conversations.
+    """
+    if not config.POSTGRES_URL:
+        raise HTTPException(
+            status_code=503,
+            detail="PostgreSQL not configured."
+        )
+    
+    try:
+        pg_db = get_postgres_db()
+        conversations = await pg_db.get_recent_conversations(
+            session_id=session_id,
+            limit=limit
+        )
+        
+        return {"conversations": conversations, "count": len(conversations)}
+    except Exception as e:
+        logger.error(f"List conversations error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/embeddings/generate", tags=["RAG"])

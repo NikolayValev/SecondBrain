@@ -467,6 +467,61 @@ class Database:
                 "files_with_embeddings": files_with_embeddings,
                 "pending_chunks": chunk_count - embedding_count
             }
+    
+    # Methods for PostgreSQL sync
+    
+    def get_all_files(self) -> list[dict]:
+        """Get all file records."""
+        with self.cursor() as cur:
+            cur.execute("SELECT * FROM files ORDER BY path")
+            return [dict(row) for row in cur.fetchall()]
+    
+    def get_file_id_by_path(self, path: str) -> Optional[int]:
+        """Get file ID by path."""
+        with self.cursor() as cur:
+            cur.execute("SELECT id FROM files WHERE path = ?", (path,))
+            row = cur.fetchone()
+            return row["id"] if row else None
+    
+    def get_sections_by_file(self, file_id: int) -> list[dict]:
+        """Get all sections for a file."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sections WHERE file_id = ? ORDER BY id",
+                (file_id,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+    
+    def get_file_tags(self, path: str) -> list[str]:
+        """Get all tag names for a file."""
+        with self.cursor() as cur:
+            cur.execute("""
+                SELECT t.name FROM tags t
+                JOIN file_tags ft ON ft.tag_id = t.id
+                JOIN files f ON f.id = ft.file_id
+                WHERE f.path = ?
+                ORDER BY t.name
+            """, (path,))
+            return [row["name"] for row in cur.fetchall()]
+    
+    def get_file_links(self, file_id: int) -> list[dict]:
+        """Get all outbound links from a file."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM links WHERE from_file_id = ?",
+                (file_id,)
+            )
+            return [dict(row) for row in cur.fetchall()]
+    
+    def get_chunk_embedding(self, chunk_id: int) -> Optional[dict]:
+        """Get embedding for a chunk."""
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM embeddings WHERE chunk_id = ?",
+                (chunk_id,)
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
 
 
 # Singleton database instance

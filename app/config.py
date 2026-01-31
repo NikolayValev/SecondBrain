@@ -22,6 +22,14 @@ class Config:
     # Database settings
     DATABASE_PATH: Path = Path(os.getenv("DATABASE_PATH", "./second_brain.db"))
     
+    # PostgreSQL settings (for Next.js/Prisma integration)
+    POSTGRES_URL: str = os.getenv(
+        "DATABASE_URL",  # Matches Prisma convention
+        os.getenv("POSTGRES_URL", "")
+    )
+    POSTGRES_SYNC_ENABLED: bool = os.getenv("POSTGRES_SYNC_ENABLED", "false").lower() == "true"
+    POSTGRES_SYNC_ON_CHANGE: bool = os.getenv("POSTGRES_SYNC_ON_CHANGE", "false").lower() == "true"
+    
     # File watcher settings
     DEBOUNCE_SECONDS: float = float(os.getenv("DEBOUNCE_SECONDS", "1.0"))
     

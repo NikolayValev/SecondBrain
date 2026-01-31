@@ -1,0 +1,226 @@
+// Prisma Schema for Second Brain
+// This schema is designed to be used by a Next.js application
+// The Python backend syncs data to this PostgreSQL database
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Core Document Models
+// ============================================================================
+
+/// Indexed markdown files from the vault
+model File {
+  id        Int      @id @default(autoincrement())
+  path      String   @unique /// Relative path from vault root
+  mtime     Float    /// Last modification timestamp (Unix epoch)
+  title     String   /// Extracted or inferred document title
+  content   String   @db.Text /// Full raw markdown content
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  sections Section[]
+  tags     FileTag[]
+  links    Link[]
+  chunks   Chunk[]
+
+  @@index([path])
+  @@index([title])
+  @@map("files")
+}
+
+/// Document sections (headings and their content)
+model Section {
+  id      Int    @id @default(autoincrement())
+  fileId  Int    @map("file_id")
+  heading String /// Section heading text
+  level   Int    /// Heading level (1-6)
+  content String @db.Text /// Section content (until next heading)
+
+  // Relations
+  file   File    @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  chunks Chunk[]
+
+  @@index([fileId])
+  @@index([heading])
+  @@map("sections")
+}
+
+/// Unique tag names
+model Tag {
+  id   Int    @id @default(autoincrement())
+  name String @unique
+
+  // Relations
+  files FileTag[]
+
+  @@index([name])
+  @@map("tags")
+}
+
+/// Junction table for file-tag relationships
+model FileTag {
+  fileId Int @map("file_id")
+  tagId  Int @map("tag_id")
+
+  file File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([fileId, tagId])
+  @@index([fileId])
+  @@index([tagId])
+  @@map("file_tags")
+}
+
+/// Outbound links from documents (wikilinks and markdown links)
+model Link {
+  id         Int    @id @default(autoincrement())
+  fromFileId Int    @map("from_file_id")
+  toPath     String @map("to_path") /// Target path or note name
+
+  file File @relation(fields: [fromFileId], references: [id], onDelete: Cascade)
+
+  @@index([fromFileId])
+  @@index([toPath])
+  @@map("links")
+}
+
+// ============================================================================
+// RAG / Vector Search Models
+// ============================================================================
+
+/// Text chunks for embedding and semantic search
+model Chunk {
+  id         Int  @id @default(autoincrement())
+  fileId     Int  @map("file_id")
+  sectionId  Int? @map("section_id")
+  chunkIndex Int  @map("chunk_index") /// Order within document
+  content    String @db.Text /// Chunk text content
+  tokenCount Int  @map("token_count") /// Approximate token count
+
+  // Relations
+  file      File       @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  section   Section?   @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  embedding Embedding?
+
+  @@index([fileId])
+  @@index([sectionId])
+  @@map("chunks")
+}
+
+/// Vector embeddings for semantic search
+model Embedding {
+  id         Int      @id @default(autoincrement())
+  chunkId    Int      @unique @map("chunk_id")
+  embedding  Bytes    /// Serialized embedding vector (Float32Array)
+  model      String   /// Model used (e.g., "text-embedding-3-small")
+  dimensions Int      /// Vector dimensions (e.g., 1536)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  chunk Chunk @relation(fields: [chunkId], references: [id], onDelete: Cascade)
+
+  @@index([chunkId])
+  @@map("embeddings")
+}
+
+// ============================================================================
+// Metadata and Sync Tracking
+// ============================================================================
+
+/// Key-value metadata storage
+model Metadata {
+  key   String @id
+  value String?
+
+  @@map("metadata")
+}
+
+/// Sync log for tracking Python backend synchronization
+model SyncLog {
+  id           Int      @id @default(autoincrement())
+  syncedAt     DateTime @default(now()) @map("synced_at")
+  filesAdded   Int      @default(0) @map("files_added")
+  filesUpdated Int      @default(0) @map("files_updated")
+  filesDeleted Int      @default(0) @map("files_deleted")
+  status       String   @default("completed") /// "completed", "failed", "partial"
+  error        String?  @db.Text
+  durationMs   Int?     @map("duration_ms")
+
+  @@index([syncedAt])
+  @@map("sync_logs")
+}
+
+// ============================================================================
+// Inbox Processing Models
+// ============================================================================
+
+/// Inbox processing history
+model InboxProcessingLog {
+  id             Int      @id @default(autoincrement())
+  processedAt    DateTime @default(now()) @map("processed_at")
+  sourceFile     String   @map("source_file")
+  destinationFile String? @map("destination_file")
+  action         String   /// "moved", "skipped", "error", "dry_run"
+  classification String?  /// Destination folder classification
+  addedTags      String[] @map("added_tags") /// Tags added during processing
+  error          String?  @db.Text
+
+  @@index([processedAt])
+  @@index([action])
+  @@map("inbox_processing_logs")
+}
+
+// ============================================================================
+// Optional: User/Session Models for Next.js App
+// ============================================================================
+
+/// Search history for analytics and suggestions
+model SearchHistory {
+  id        Int      @id @default(autoincrement())
+  query     String
+  results   Int      @default(0) /// Number of results returned
+  searchedAt DateTime @default(now()) @map("searched_at")
+  sessionId String?  @map("session_id")
+
+  @@index([searchedAt])
+  @@index([query])
+  @@map("search_history")
+}
+
+/// RAG conversation history
+model Conversation {
+  id        Int       @id @default(autoincrement())
+  sessionId String?   @map("session_id")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  title     String?   /// Auto-generated or user-set title
+  
+  messages  Message[]
+
+  @@index([sessionId])
+  @@index([createdAt])
+  @@map("conversations")
+}
+
+/// Individual messages in a conversation
+model Message {
+  id             Int      @id @default(autoincrement())
+  conversationId Int      @map("conversation_id")
+  role           String   /// "user", "assistant", "system"
+  content        String   @db.Text
+  sources        Json?    /// Array of source file references
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("messages")
+}
