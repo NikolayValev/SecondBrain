@@ -6,6 +6,7 @@ A local daemon that indexes an Obsidian vault and exposes a search API.
 import logging
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,7 @@ from app.indexer import indexer
 from app.watcher import watcher
 from app.rag import rag_service
 from app.embeddings import embedding_service
+from app.inbox_processor import inbox_processor, InboxConfig, create_default_config
 
 # Configure logging
 logging.basicConfig(
@@ -82,6 +84,31 @@ class AskRequest(BaseModel):
     """Request body for /ask endpoint."""
     question: str
     include_sources: bool = True
+
+
+class InboxProcessRequest(BaseModel):
+    """Request body for inbox processing."""
+    dry_run: bool = False
+
+
+class InboxFileResult(BaseModel):
+    """Result for a single processed file."""
+    source_path: str
+    destination_path: Optional[str] = None
+    action: str
+    classification: str
+    added_tags: list[str] = []
+    error: Optional[str] = None
+
+
+class InboxProcessResponse(BaseModel):
+    """Response for inbox processing."""
+    processed: int
+    moved: int
+    skipped: int
+    errors: int
+    duration_seconds: float
+    results: list[InboxFileResult]
 
 
 class SourceInfo(BaseModel):
@@ -375,6 +402,69 @@ async def get_embedding_stats():
     """
     stats = db.get_embedding_stats()
     return EmbeddingStatsResponse(**stats)
+
+
+@app.post("/inbox/process", response_model=InboxProcessResponse, tags=["Inbox"])
+async def process_inbox(request: InboxProcessRequest):
+    """
+    Process documents in the inbox folder.
+    
+    Classifies, tags, and moves documents from 00_Inbox to appropriate folders.
+    Use dry_run=True to preview changes without moving files.
+    """
+    try:
+        # Create processor with dry_run setting
+        processor_config = create_default_config()
+        processor_config.dry_run = request.dry_run
+        
+        from app.inbox_processor import InboxProcessor
+        processor = InboxProcessor(processor_config)
+        
+        result = await processor.process_inbox()
+        
+        return InboxProcessResponse(
+            processed=result.processed,
+            moved=result.moved,
+            skipped=result.skipped,
+            errors=result.errors,
+            duration_seconds=result.duration_seconds,
+            results=[
+                InboxFileResult(
+                    source_path=str(r.source_path),
+                    destination_path=str(r.destination_path) if r.destination_path else None,
+                    action=r.action,
+                    classification=r.classification,
+                    added_tags=r.added_tags,
+                    error=r.error,
+                )
+                for r in result.results
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Inbox processing error: {e}")
+        raise HTTPException(status_code=500, detail=f"Inbox processing failed: {str(e)}")
+
+
+@app.get("/inbox/files", tags=["Inbox"])
+async def list_inbox_files():
+    """
+    List files currently in the inbox.
+    
+    Returns files that would be processed on next inbox run.
+    """
+    files = inbox_processor.get_inbox_files()
+    return {
+        "count": len(files),
+        "files": [
+            {
+                "name": f.name,
+                "path": str(f.relative_to(config.VAULT_PATH)),
+                "size_bytes": f.stat().st_size,
+                "modified": datetime.fromtimestamp(f.stat().st_mtime).isoformat(),
+            }
+            for f in files
+        ]
+    }
 
 
 @app.post("/embeddings/generate", tags=["RAG"])

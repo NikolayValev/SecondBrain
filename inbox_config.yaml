@@ -1,0 +1,91 @@
+inbox_folder: 00_Inbox
+default_destination: 00_Inbox/Unsorted
+classification_method: rules_then_llm
+conflict_resolution: rename
+metadata_action: merge
+dry_run: false
+backup_before_move: true
+backup_folder: .inbox_backup
+file_extensions:
+- .md
+- .markdown
+ignore_patterns:
+- ^\.
+- ^_
+- template
+global_frontmatter:
+  processed_date: null
+  source: inbox
+folder_tags:
+  03_Projects:
+  - project
+  05_Journal:
+  - journal
+  - daily
+  06_Meetings:
+  - meeting
+  14_Fitness:
+  - fitness
+  - health
+reindex_after_move: true
+rules:
+- name: meeting_notes
+  destination_folder: 06_Meetings
+  title_patterns:
+  - meeting
+  - standup
+  - sync
+  content_patterns:
+  - 'attendees?:'
+  - 'agenda:'
+  add_tags:
+  - meeting
+  priority: 10
+- name: daily_journal
+  destination_folder: 05_Journal
+  filename_patterns:
+  - ^\d{4}-\d{2}-\d{2}
+  add_tags:
+  - journal
+  - daily
+  priority: 10
+- name: project_notes
+  destination_folder: 03_Projects
+  any_tags:
+  - project
+  - epic
+  add_tags:
+  - project
+  priority: 8
+- name: fitness_logs
+  destination_folder: 14_Fitness
+  any_tags:
+  - fitness
+  - workout
+  - exercise
+  title_patterns:
+  - workout
+  - exercise
+  - training
+  add_tags:
+  - fitness
+  priority: 8
+llm_config:
+  enabled: true
+  suggest_tags: true
+  max_suggested_tags: 5
+  available_categories:
+    projects: 03_Projects
+    reference: 04_Reference
+    journal: 05_Journal
+    meetings: 06_Meetings
+    ideas: 07_Ideas
+    ai_agent: 08_AI_Agent
+    learning: 09_Learning
+    resources: 10_Resources
+    archive: 11_Archive
+    reviews: 12_Reviews
+    health: 13_Health
+    fitness: 14_Fitness
+    philosophy: 15_Philosophy
+    professional: 16_Professional

@@ -163,6 +163,7 @@ class DebouncedHandler(FileSystemEventHandler):
         
         logger.debug(f"File moved: {old_path} -> {new_path}")
         
+        schedule_path = None
         with self._lock:
             # Remove old path from pending if exists
             if old_path in self._pending:
@@ -178,15 +179,19 @@ class DebouncedHandler(FileSystemEventHandler):
                     "old_path": old_path,
                     "time": datetime.now()
                 }
-                self._schedule_processing(new_path)
+                schedule_path = new_path
             elif old_should:
                 # Moved out of scope - treat as delete
                 self._pending[old_path] = {"type": "deleted", "time": datetime.now()}
-                self._schedule_processing(old_path)
+                schedule_path = old_path
             elif new_should:
                 # Moved into scope - treat as create
                 self._pending[new_path] = {"type": "created", "time": datetime.now()}
-                self._schedule_processing(new_path)
+                schedule_path = new_path
+        
+        # Schedule outside the lock to prevent deadlock
+        if schedule_path:
+            self._schedule_processing(schedule_path)
     
     def stop(self) -> None:
         """Stop all pending timers."""

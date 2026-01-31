@@ -263,6 +263,12 @@ class Database:
                 VALUES (?, ?)
             """, (file_id, tag_id))
     
+    def get_all_tags(self) -> list[str]:
+        """Get all tag names in the database."""
+        with self.cursor() as cur:
+            cur.execute("SELECT name FROM tags ORDER BY name")
+            return [row["name"] for row in cur.fetchall()]
+    
     def add_link(self, from_file_id: int, to_path: str) -> None:
         """Add an outbound link from a file."""
         with self.cursor() as cur:

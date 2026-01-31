@@ -112,11 +112,12 @@ class GeminiProvider(LLMProvider):
     """Google Gemini LLM provider implementation."""
     
     def __init__(self):
-        import google.generativeai as genai
+        from google import genai
+        from google.genai import types
         
-        genai.configure(api_key=Config.GEMINI_API_KEY)
-        self.genai = genai
-        self.model = genai.GenerativeModel(Config.GEMINI_MODEL)
+        self.client = genai.Client(api_key=Config.GEMINI_API_KEY)
+        self.types = types
+        self.model_name = Config.GEMINI_MODEL
         self.embedding_model = Config.GEMINI_EMBEDDING_MODEL
         self.default_temperature = Config.LLM_TEMPERATURE
         self.default_max_tokens = Config.LLM_MAX_TOKENS
@@ -139,41 +140,51 @@ class GeminiProvider(LLMProvider):
                 "parts": [msg["content"]]
             })
         
-        # Handle system message by prepending to context
+        # Handle system message
         system_msg = next((m["content"] for m in messages if m["role"] == "system"), None)
         
-        generation_config = self.genai.GenerationConfig(
+        # Build contents for the API
+        contents = []
+        for msg in gemini_messages:
+            contents.append(self.types.Content(
+                role=msg["role"],
+                parts=[self.types.Part.from_text(msg["parts"][0])]
+            ))
+        
+        # Include system prompt in the last user message if present
+        if system_msg and contents:
+            last_content = contents[-1]
+            original_text = last_content.parts[0].text
+            contents[-1] = self.types.Content(
+                role=last_content.role,
+                parts=[self.types.Part.from_text(f"{system_msg}\n\n{original_text}")]
+            )
+        
+        config = self.types.GenerateContentConfig(
             temperature=temperature or self.default_temperature,
             max_output_tokens=max_tokens or self.default_max_tokens,
         )
         
-        chat = self.model.start_chat(history=gemini_messages[:-1] if len(gemini_messages) > 1 else [])
-        
-        # Include system prompt in the user message if present
-        user_message = gemini_messages[-1]["parts"][0] if gemini_messages else ""
-        if system_msg:
-            user_message = f"{system_msg}\n\n{user_message}"
-        
-        response = await chat.send_message_async(
-            user_message,
-            generation_config=generation_config,
+        response = await self.client.aio.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=config,
         )
         return response.text
     
     async def embed(self, text: str) -> list[float]:
-        result = self.genai.embed_content(
-            model=f"models/{self.embedding_model}",
-            content=text,
-            task_type="retrieval_document",
+        response = await self.client.aio.models.embed_content(
+            model=self.embedding_model,
+            contents=text,
         )
-        return result["embedding"]
+        return response.embeddings[0].values
     
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        embeddings = []
-        for text in texts:
-            embedding = await self.embed(text)
-            embeddings.append(embedding)
-        return embeddings
+        response = await self.client.aio.models.embed_content(
+            model=self.embedding_model,
+            contents=texts,
+        )
+        return [emb.values for emb in response.embeddings]
 
 
 class OllamaProvider(LLMProvider):
