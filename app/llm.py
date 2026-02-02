@@ -244,15 +244,74 @@ class OllamaProvider(LLMProvider):
         await self.client.aclose()
 
 
+class AnthropicProvider(LLMProvider):
+    """Anthropic Claude LLM provider implementation."""
+    
+    def __init__(self):
+        from anthropic import AsyncAnthropic
+        
+        self.client = AsyncAnthropic(api_key=Config.ANTHROPIC_API_KEY)
+        self.model = Config.ANTHROPIC_MODEL
+        self.default_temperature = Config.LLM_TEMPERATURE
+        self.default_max_tokens = Config.LLM_MAX_TOKENS
+    
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        # Extract system message
+        system_msg = None
+        chat_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_msg = msg["content"]
+            else:
+                chat_messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
+        
+        kwargs = {
+            "model": self.model,
+            "messages": chat_messages,
+            "temperature": temperature or self.default_temperature,
+            "max_tokens": max_tokens or self.default_max_tokens,
+        }
+        if system_msg:
+            kwargs["system"] = system_msg
+        
+        response = await self.client.messages.create(**kwargs)
+        return response.content[0].text
+    
+    async def embed(self, text: str) -> list[float]:
+        # Anthropic doesn't have embedding API, use OpenAI or Gemini for embeddings
+        raise NotImplementedError(
+            "Anthropic does not provide an embedding API. "
+            "Use OpenAI or Gemini for embeddings when using Anthropic for chat."
+        )
+    
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        raise NotImplementedError(
+            "Anthropic does not provide an embedding API. "
+            "Use OpenAI or Gemini for embeddings when using Anthropic for chat."
+        )
+
+
 # Provider registry
 _providers: dict[str, type[LLMProvider]] = {
     "openai": OpenAIProvider,
     "gemini": GeminiProvider,
     "ollama": OllamaProvider,
+    "anthropic": AnthropicProvider,
 }
 
 # Singleton instance
 _llm_instance: Optional[LLMProvider] = None
+
+# Cache for dynamically created providers
+_provider_cache: dict[str, LLMProvider] = {}
 
 
 def get_llm_provider() -> LLMProvider:
@@ -329,3 +388,93 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     """
     provider = get_llm_provider()
     return await provider.embed_batch(texts)
+
+
+def get_provider_by_name(provider_name: str) -> LLMProvider:
+    """
+    Get a specific LLM provider instance by name.
+    
+    Args:
+        provider_name: The provider name (openai, gemini, ollama, anthropic).
+        
+    Returns:
+        An instance of the requested provider.
+        
+    Raises:
+        ValueError: If the provider is not supported or not configured.
+    """
+    provider_name = provider_name.lower()
+    
+    if provider_name not in _providers:
+        raise ValueError(
+            f"Unsupported LLM provider: {provider_name}. "
+            f"Supported: {', '.join(_providers.keys())}"
+        )
+    
+    # Check if already cached
+    if provider_name in _provider_cache:
+        return _provider_cache[provider_name]
+    
+    # Create and cache the provider
+    try:
+        provider = _providers[provider_name]()
+        _provider_cache[provider_name] = provider
+        logger.info(f"Created LLM provider: {provider_name}")
+        return provider
+    except Exception as e:
+        raise ValueError(f"Failed to create provider {provider_name}: {e}")
+
+
+async def check_provider_availability(provider_name: str) -> dict:
+    """
+    Check if a provider is available and configured.
+    
+    Returns:
+        Dict with 'available' bool and optional 'error' message.
+    """
+    provider_name = provider_name.lower()
+    
+    if provider_name not in _providers:
+        return {"available": False, "error": f"Unknown provider: {provider_name}"}
+    
+    # Check configuration
+    if provider_name == "openai":
+        if not Config.OPENAI_API_KEY:
+            return {"available": False, "error": "OPENAI_API_KEY not configured"}
+    elif provider_name == "gemini":
+        if not Config.GEMINI_API_KEY:
+            return {"available": False, "error": "GEMINI_API_KEY not configured"}
+    elif provider_name == "anthropic":
+        if not Config.ANTHROPIC_API_KEY:
+            return {"available": False, "error": "ANTHROPIC_API_KEY not configured"}
+    elif provider_name == "ollama":
+        # Check if Ollama is running
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(f"{Config.OLLAMA_BASE_URL}/api/tags")
+                if response.status_code != 200:
+                    return {"available": False, "error": "Ollama not responding"}
+        except Exception as e:
+            return {"available": False, "error": f"Cannot connect to Ollama: {e}"}
+    
+    return {"available": True}
+
+
+async def list_ollama_models() -> list[str]:
+    """List available Ollama models."""
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{Config.OLLAMA_BASE_URL}/api/tags")
+            if response.status_code == 200:
+                data = response.json()
+                return [model["name"] for model in data.get("models", [])]
+    except Exception as e:
+        logger.error(f"Failed to list Ollama models: {e}")
+    return []
+
+
+def list_providers() -> list[str]:
+    """List all registered provider names."""
+    return list(_providers.keys())

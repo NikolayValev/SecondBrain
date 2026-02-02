@@ -5,16 +5,18 @@ A local daemon that indexes an Obsidian vault and exposes a search API.
 
 import logging
 import sys
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from app.config import config
+from app.config import config, Config
 from app.db import db
 from app.indexer import indexer
 from app.watcher import watcher
@@ -23,6 +25,9 @@ from app.embeddings import embedding_service
 from app.inbox_processor import inbox_processor, InboxConfig, create_default_config
 from app.sync_service import get_sync_service, run_sync
 from app.db_postgres import get_postgres_db, close_postgres_db
+from app import llm
+from app.rag_techniques import get_technique, list_techniques
+from app.vector_search import vector_search
 
 # Configure logging
 logging.basicConfig(
@@ -80,10 +85,46 @@ class ErrorResponse(BaseModel):
     """Error response."""
     error: str
     detail: Optional[str] = None
+    code: Optional[str] = None
 
 
 class AskRequest(BaseModel):
-    """Request body for /ask endpoint."""
+    """Request body for /ask endpoint (new API spec)."""
+    question: str
+    conversation_id: Optional[str] = None
+    provider: str = "gemini"
+    model: Optional[str] = None
+    rag_technique: str = "basic"
+    include_sources: bool = True
+
+
+class Source(BaseModel):
+    """Source information for responses."""
+    path: str
+    title: str
+    snippet: str
+    score: float
+
+
+class TokenUsage(BaseModel):
+    """Token usage information."""
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
+class AskResponse(BaseModel):
+    """Response from /ask endpoint (new API spec)."""
+    answer: str
+    sources: list[Source]
+    conversation_id: Optional[str] = None
+    model_used: str
+    tokens_used: Optional[TokenUsage] = None
+
+
+# Legacy response model for backward compatibility
+class LegacyAskRequest(BaseModel):
+    """Legacy request body for /ask endpoint."""
     question: str
     include_sources: bool = True
 
@@ -189,6 +230,120 @@ class ConversationResponse(BaseModel):
     messages: list[dict]
 
 
+# New models for API spec
+class ProviderModel(BaseModel):
+    """Model information within a provider."""
+    id: str
+    name: str
+    context_length: int = 128000
+    available: bool = True
+
+
+class ProviderInfo(BaseModel):
+    """Provider information."""
+    id: str
+    name: str
+    available: bool
+    base_url: Optional[str] = None
+    models: list[ProviderModel] = []
+    error: Optional[str] = None
+
+
+class RAGTechniqueInfo(BaseModel):
+    """RAG technique information."""
+    id: str
+    name: str
+    description: str
+
+
+class ConfigDefaults(BaseModel):
+    """Default configuration values."""
+    provider: str
+    model: str
+    rag_technique: str
+
+
+class ConfigResponse(BaseModel):
+    """Response for /config endpoint."""
+    providers: list[ProviderInfo]
+    rag_techniques: list[RAGTechniqueInfo]
+    defaults: ConfigDefaults
+    embedding_model: str
+    vector_store: str = "sqlite"
+
+
+class ProviderStatus(BaseModel):
+    """Provider status for health check."""
+    available: bool
+    models_loaded: Optional[list[str]] = None
+    error: Optional[str] = None
+
+
+class VectorStoreStatus(BaseModel):
+    """Vector store status for health check."""
+    type: str
+    documents_indexed: int
+
+
+class HealthResponse(BaseModel):
+    """Enhanced health check response."""
+    status: str
+    version: str = "1.0.0"
+    vault_path: str
+    watcher_running: bool
+    providers: dict[str, ProviderStatus] = {}
+    vector_store: Optional[VectorStoreStatus] = None
+
+
+class SemanticSearchRequest(BaseModel):
+    """Request for semantic search."""
+    query: str
+    limit: int = 10
+    rag_technique: str = "basic"
+
+
+class SemanticSearchResult(BaseModel):
+    """A single semantic search result."""
+    path: str
+    title: str
+    snippet: str
+    score: float
+    metadata: dict = {}
+
+
+class SemanticSearchResponse(BaseModel):
+    """Response for semantic search."""
+    results: list[SemanticSearchResult]
+    query_embedding_time_ms: Optional[float] = None
+    search_time_ms: Optional[float] = None
+
+
+class IndexRequest(BaseModel):
+    """Request for indexing."""
+    paths: Optional[list[str]] = None
+    force: bool = False
+
+
+class IndexResponse(BaseModel):
+    """Response for index operation."""
+    status: str
+    job_id: str
+    documents_queued: int
+
+
+class IndexStatusResponse(BaseModel):
+    """Response for index status."""
+    status: str  # idle, indexing, error
+    documents_indexed: int
+    documents_pending: int
+    last_indexed_at: Optional[str] = None
+    current_job: Optional[dict] = None
+
+
+# State for indexing jobs
+_indexing_jobs: dict[str, dict] = {}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -249,17 +404,55 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add CORS middleware for frontend integration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check():
     """
-    Health check endpoint.
-    Returns the status of the daemon and vault path.
+    Enhanced health check endpoint.
+    Returns the status of the daemon, providers, and vector store.
     """
+    # Check provider availability
+    providers = {}
+    for provider_name in ["ollama", "openai", "gemini", "anthropic"]:
+        status = await llm.check_provider_availability(provider_name)
+        if status["available"]:
+            models_loaded = None
+            if provider_name == "ollama":
+                models_loaded = await llm.list_ollama_models()
+            providers[provider_name] = ProviderStatus(
+                available=True,
+                models_loaded=models_loaded
+            )
+        else:
+            providers[provider_name] = ProviderStatus(
+                available=False,
+                error=status.get("error")
+            )
+    
+    # Get vector store stats
+    stats = db.get_stats()
+    embedding_stats = db.get_embedding_stats()
+    vector_store = VectorStoreStatus(
+        type="sqlite",
+        documents_indexed=embedding_stats.get("embedding_count", 0)
+    )
+    
     return HealthResponse(
-        status="healthy",
+        status="ok",
+        version="1.0.0",
         vault_path=str(config.VAULT_PATH),
-        watcher_running=watcher.is_running
+        watcher_running=watcher.is_running,
+        providers=providers,
+        vector_store=vector_store
     )
 
 
@@ -276,6 +469,114 @@ async def get_stats():
         tag_count=stats["tag_count"],
         link_count=stats["link_count"],
         last_indexed=stats["last_indexed"]
+    )
+
+
+@app.get("/config", response_model=ConfigResponse, tags=["System"])
+async def get_config():
+    """
+    Get available configuration options.
+    Returns available providers, models, and RAG techniques.
+    """
+    providers = []
+    
+    # Ollama provider
+    ollama_status = await llm.check_provider_availability("ollama")
+    ollama_models = []
+    if ollama_status["available"]:
+        model_names = await llm.list_ollama_models()
+        for name in model_names:
+            ollama_models.append(ProviderModel(
+                id=name,
+                name=name.title().replace("-", " "),
+                context_length=128000,
+                available=True
+            ))
+    providers.append(ProviderInfo(
+        id="ollama",
+        name="Ollama (Local)",
+        available=ollama_status["available"],
+        base_url=Config.OLLAMA_BASE_URL,
+        models=ollama_models,
+        error=ollama_status.get("error") if not ollama_status["available"] else None
+    ))
+    
+    # OpenAI provider
+    openai_status = await llm.check_provider_availability("openai")
+    openai_models = [
+        ProviderModel(id="gpt-4o", name="GPT-4o", context_length=128000),
+        ProviderModel(id="gpt-4o-mini", name="GPT-4o Mini", context_length=128000),
+        ProviderModel(id="gpt-4-turbo", name="GPT-4 Turbo", context_length=128000),
+        ProviderModel(id="gpt-3.5-turbo", name="GPT-3.5 Turbo", context_length=16385),
+    ] if openai_status["available"] else []
+    providers.append(ProviderInfo(
+        id="openai",
+        name="OpenAI",
+        available=openai_status["available"],
+        models=openai_models,
+        error=openai_status.get("error") if not openai_status["available"] else None
+    ))
+    
+    # Gemini provider
+    gemini_status = await llm.check_provider_availability("gemini")
+    gemini_models = [
+        ProviderModel(id="gemini-2.5-flash", name="Gemini 2.5 Flash", context_length=1000000),
+        ProviderModel(id="gemini-2.5-pro", name="Gemini 2.5 Pro", context_length=1000000),
+        ProviderModel(id="gemini-2.0-flash", name="Gemini 2.0 Flash", context_length=1000000),
+        ProviderModel(id="gemini-1.5-pro", name="Gemini 1.5 Pro", context_length=2000000),
+        ProviderModel(id="gemini-1.5-flash", name="Gemini 1.5 Flash", context_length=1000000),
+    ] if gemini_status["available"] else []
+    providers.append(ProviderInfo(
+        id="gemini",
+        name="Google Gemini",
+        available=gemini_status["available"],
+        models=gemini_models,
+        error=gemini_status.get("error") if not gemini_status["available"] else None
+    ))
+    
+    # Anthropic provider
+    anthropic_status = await llm.check_provider_availability("anthropic")
+    anthropic_models = [
+        ProviderModel(id="claude-sonnet-4-20250514", name="Claude Sonnet 4", context_length=200000),
+        ProviderModel(id="claude-3-5-sonnet-20241022", name="Claude 3.5 Sonnet", context_length=200000),
+        ProviderModel(id="claude-3-opus-20240229", name="Claude 3 Opus", context_length=200000),
+        ProviderModel(id="claude-3-haiku-20240307", name="Claude 3 Haiku", context_length=200000),
+    ] if anthropic_status["available"] else []
+    providers.append(ProviderInfo(
+        id="anthropic",
+        name="Anthropic",
+        available=anthropic_status["available"],
+        models=anthropic_models,
+        error=anthropic_status.get("error") if not anthropic_status["available"] else None
+    ))
+    
+    # Get RAG techniques
+    rag_techniques = [
+        RAGTechniqueInfo(**t) for t in list_techniques()
+    ]
+    
+    # Determine defaults
+    default_provider = Config.LLM_PROVIDER.lower()
+    default_model = {
+        "openai": Config.OPENAI_MODEL,
+        "gemini": Config.GEMINI_MODEL,
+        "ollama": Config.OLLAMA_MODEL,
+        "anthropic": Config.ANTHROPIC_MODEL,
+    }.get(default_provider, "gpt-4o")
+    
+    # Get embedding model
+    embedding_model = embedding_service.get_model_name()
+    
+    return ConfigResponse(
+        providers=providers,
+        rag_techniques=rag_techniques,
+        defaults=ConfigDefaults(
+            provider=default_provider,
+            model=default_model,
+            rag_technique="basic"
+        ),
+        embedding_model=embedding_model,
+        vector_store="sqlite"
     )
 
 
@@ -311,6 +612,75 @@ async def search(
         )
     except Exception as e:
         logger.error(f"Search error: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.post("/search", response_model=SemanticSearchResponse, tags=["Search"])
+async def semantic_search(request: SemanticSearchRequest):
+    """
+    Semantic search across the vault (without LLM generation).
+    
+    Uses embeddings for semantic similarity matching.
+    Supports different RAG techniques for retrieval.
+    """
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    import time
+    
+    try:
+        # Get the RAG technique
+        technique = get_technique(request.rag_technique)
+        
+        # Time the embedding
+        embed_start = time.time()
+        
+        # Retrieve using the technique
+        rag_context = await technique.retrieve(
+            query=request.query,
+            top_k=request.limit,
+            threshold=0.3,
+        )
+        
+        embed_time = (time.time() - embed_start) * 1000
+        
+        # Build results
+        results = []
+        for chunk in rag_context.chunks:
+            # Get file metadata
+            file_record = db.get_file_by_path(chunk.file_path)
+            metadata = {}
+            if file_record:
+                # Get tags for file
+                with db.cursor() as cur:
+                    cur.execute("""
+                        SELECT t.name FROM tags t
+                        JOIN file_tags ft ON t.id = ft.tag_id
+                        WHERE ft.file_id = ?
+                    """, (chunk.file_id,))
+                    tags = [row["name"] for row in cur.fetchall()]
+                    metadata["tags"] = tags
+                    metadata["created_at"] = file_record.get("created_at")
+                    metadata["updated_at"] = file_record.get("updated_at")
+            
+            results.append(SemanticSearchResult(
+                path=chunk.file_path,
+                title=chunk.file_title,
+                snippet=chunk.chunk_content[:300] + "..." if len(chunk.chunk_content) > 300 else chunk.chunk_content,
+                score=round(chunk.similarity, 4),
+                metadata=metadata,
+            ))
+        
+        return SemanticSearchResponse(
+            results=results,
+            query_embedding_time_ms=round(embed_time, 2),
+            search_time_ms=round(embed_time, 2),  # Total time for now
+        )
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Semantic search error: {e}")
         raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
 
 
@@ -404,6 +774,123 @@ async def trigger_reindex(full: bool = Query(False, description="Perform full re
         raise HTTPException(status_code=500, detail=f"Reindex failed: {str(e)}")
 
 
+@app.post("/index", response_model=IndexResponse, tags=["Indexing"])
+async def trigger_index(request: IndexRequest, background_tasks: BackgroundTasks):
+    """
+    Trigger document indexing for the knowledge base.
+    
+    Runs indexing in the background and returns a job ID for tracking.
+    """
+    job_id = str(uuid.uuid4())
+    
+    # Initialize job status
+    _indexing_jobs[job_id] = {
+        "status": "started",
+        "progress": 0,
+        "documents_processed": 0,
+        "documents_total": 0,
+        "started_at": datetime.now().isoformat(),
+    }
+    
+    async def run_indexing():
+        try:
+            _indexing_jobs[job_id]["status"] = "indexing"
+            
+            if request.paths:
+                # Index specific paths
+                total = len(request.paths)
+                processed = 0
+                errors = 0
+                
+                for path in request.paths:
+                    try:
+                        # Reindex specific file
+                        full_path = config.VAULT_PATH / path
+                        if full_path.exists():
+                            indexer.index_file(str(full_path), force=request.force)
+                            processed += 1
+                        else:
+                            errors += 1
+                    except Exception as e:
+                        logger.error(f"Failed to index {path}: {e}")
+                        errors += 1
+                    
+                    _indexing_jobs[job_id]["documents_processed"] = processed
+                    _indexing_jobs[job_id]["progress"] = processed / total if total > 0 else 1
+                
+                _indexing_jobs[job_id]["documents_total"] = total
+            else:
+                # Full or incremental scan
+                if request.force:
+                    indexed, errors = indexer.full_scan()
+                else:
+                    indexed, errors = indexer.incremental_scan()
+                
+                _indexing_jobs[job_id]["documents_processed"] = indexed
+                _indexing_jobs[job_id]["documents_total"] = indexed + errors
+            
+            _indexing_jobs[job_id]["status"] = "completed"
+            _indexing_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+            
+        except Exception as e:
+            logger.error(f"Indexing job {job_id} failed: {e}")
+            _indexing_jobs[job_id]["status"] = "error"
+            _indexing_jobs[job_id]["error"] = str(e)
+    
+    # Queue the background task
+    background_tasks.add_task(run_indexing)
+    
+    # Count documents to queue
+    if request.paths:
+        docs_queued = len(request.paths)
+    else:
+        # Count markdown files in vault
+        docs_queued = sum(1 for _ in config.VAULT_PATH.rglob("*.md"))
+    
+    _indexing_jobs[job_id]["documents_total"] = docs_queued
+    
+    return IndexResponse(
+        status="started",
+        job_id=job_id,
+        documents_queued=docs_queued,
+    )
+
+
+@app.get("/index/status", response_model=IndexStatusResponse, tags=["Indexing"])
+async def get_index_status():
+    """
+    Get the current indexing status.
+    """
+    stats = db.get_stats()
+    embedding_stats = db.get_embedding_stats()
+    
+    # Find any active job
+    current_job = None
+    for job_id, job in _indexing_jobs.items():
+        if job["status"] in ("started", "indexing"):
+            current_job = {
+                "job_id": job_id,
+                "progress": job.get("progress", 0),
+                "documents_processed": job.get("documents_processed", 0),
+                "documents_total": job.get("documents_total", 0),
+            }
+            break
+    
+    # Determine overall status
+    if current_job:
+        status = "indexing"
+    else:
+        status = "idle"
+    
+    return IndexStatusResponse(
+        status=status,
+        documents_indexed=stats["file_count"],
+        documents_pending=embedding_stats.get("pending_chunks", 0),
+        last_indexed_at=stats.get("last_indexed"),
+        current_job=current_job,
+    )
+
+
 # RAG Endpoints
 
 @app.post("/ask", response_model=AskResponse, tags=["RAG"])
@@ -414,39 +901,114 @@ async def ask_question(request: AskRequest):
     Searches the knowledge base for relevant content and uses an LLM
     to generate an answer based on the retrieved context.
     
-    Requires LLM configuration (OPENAI_API_KEY, GEMINI_API_KEY, or Ollama).
+    Supports multiple providers, models, and RAG techniques.
     """
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     
     try:
-        response = await rag_service.ask(
-            question=request.question,
-            include_sources=request.include_sources,
+        # Get the RAG technique
+        technique = get_technique(request.rag_technique)
+        
+        # Retrieve context using the selected technique
+        rag_context = await technique.retrieve(
+            query=request.question,
+            top_k=5,
+            threshold=0.3,
         )
         
+        if not rag_context.chunks:
+            return AskResponse(
+                answer="I couldn't find any relevant information in your knowledge base to answer this question.",
+                sources=[],
+                conversation_id=request.conversation_id or str(uuid.uuid4()),
+                model_used=request.model or Config.GEMINI_MODEL,
+            )
+        
+        # Get the LLM provider
+        try:
+            provider = llm.get_provider_by_name(request.provider)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=str(e),
+            )
+        
+        # Build the prompt
+        system_prompt = """You are a helpful assistant that answers questions based on the user's personal knowledge base (Obsidian vault).
+
+Use the provided context from the knowledge base to answer the question. If the context doesn't contain relevant information, say so honestly.
+
+Guidelines:
+- Be concise but thorough
+- Reference specific notes when relevant
+- If information is incomplete, acknowledge it
+- Don't make up information not in the context"""
+        
+        user_message = f"""Context from knowledge base:
+---
+{rag_context.context_text}
+---
+
+Question: {request.question}
+
+Answer based on the context above:"""
+        
+        # Generate answer
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+        
+        # Determine the model to use
+        model_used = request.model
+        if not model_used:
+            model_used = {
+                "openai": Config.OPENAI_MODEL,
+                "gemini": Config.GEMINI_MODEL,
+                "ollama": Config.OLLAMA_MODEL,
+                "anthropic": Config.ANTHROPIC_MODEL,
+            }.get(request.provider.lower(), Config.GEMINI_MODEL)
+        
+        answer = await provider.chat(messages=messages)
+        
+        # Build sources list
+        sources = []
+        if request.include_sources:
+            seen_files = set()
+            for chunk in rag_context.chunks:
+                if chunk.file_path not in seen_files:
+                    sources.append(Source(
+                        path=chunk.file_path,
+                        title=chunk.file_title,
+                        snippet=chunk.chunk_content[:200] + "..." if len(chunk.chunk_content) > 200 else chunk.chunk_content,
+                        score=round(chunk.similarity, 3),
+                    ))
+                    seen_files.add(chunk.file_path)
+        
+        # Generate or use existing conversation ID
+        conversation_id = request.conversation_id or str(uuid.uuid4())
+        
         return AskResponse(
-            answer=response.answer,
-            sources=[
-                SourceInfo(
-                    file_path=s["file_path"],
-                    file_title=s["file_title"],
-                    section=s.get("section"),
-                    similarity=s["similarity"],
-                )
-                for s in response.sources
-            ],
-            query=response.query,
+            answer=answer,
+            sources=sources,
+            conversation_id=conversation_id,
+            model_used=model_used,
+            tokens_used=TokenUsage(prompt=0, completion=0, total=0),  # TODO: Track actual usage
         )
+        
     except ValueError as e:
         logger.error(f"RAG configuration error: {e}")
-        raise HTTPException(
-            status_code=503,
-            detail=f"LLM not configured: {str(e)}. Set OPENAI_API_KEY, GEMINI_API_KEY, or configure Ollama."
+        return JSONResponse(
+            status_code=400,
+            content={"error": str(e), "code": "RAG_ERROR"}
         )
     except Exception as e:
         logger.error(f"RAG error: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to generate answer: {str(e)}", "code": "GENERATION_ERROR"}
+        )
 
 
 @app.get("/embeddings/stats", response_model=EmbeddingStatsResponse, tags=["RAG"])

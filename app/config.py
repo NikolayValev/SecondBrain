@@ -60,12 +60,19 @@ class Config:
     
     # Ollama settings (local models)
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.2")
     OLLAMA_EMBEDDING_MODEL: str = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+    
+    # Anthropic settings
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
     
     # Common LLM settings
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+    
+    # Reranker settings (for rerank RAG technique)
+    RERANKER_MODEL: str = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
     
     @classmethod
     def validate(cls) -> None:
@@ -83,9 +90,9 @@ class Config:
         """Validate LLM provider configuration."""
         provider = cls.LLM_PROVIDER.lower()
         
-        if provider not in ("openai", "gemini", "ollama"):
+        if provider not in ("openai", "gemini", "ollama", "anthropic"):
             raise ValueError(
-                f"LLM_PROVIDER must be one of: openai, gemini, ollama. "
+                f"LLM_PROVIDER must be one of: openai, gemini, ollama, anthropic. "
                 f"Got: {provider}"
             )
         
@@ -94,6 +101,9 @@ class Config:
         
         if provider == "gemini" and not cls.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY must be set when using Gemini provider")
+        
+        if provider == "anthropic" and not cls.ANTHROPIC_API_KEY:
+            raise ValueError("ANTHROPIC_API_KEY must be set when using Anthropic provider")
     
     @classmethod
     def get_llm_config(cls) -> dict:
@@ -127,6 +137,12 @@ class Config:
                 "base_url": cls.OLLAMA_BASE_URL,
                 "model": cls.OLLAMA_MODEL,
                 "embedding_model": cls.OLLAMA_EMBEDDING_MODEL,
+            }
+        elif provider == "anthropic":
+            return {
+                **base_config,
+                "api_key": cls.ANTHROPIC_API_KEY,
+                "model": cls.ANTHROPIC_MODEL,
             }
         
         raise ValueError(f"Unknown LLM provider: {provider}")

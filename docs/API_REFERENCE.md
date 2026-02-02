@@ -18,7 +18,7 @@ Interactive documentation available at:
 
 ### Health Check
 
-Check if the daemon is running.
+Enhanced health check endpoint with provider status.
 
 ```http
 GET /health
@@ -28,9 +28,94 @@ GET /health
 
 ```json
 {
-  "status": "healthy",
+  "status": "ok",
+  "version": "1.0.0",
   "vault_path": "C:\\Users\\Name\\Documents\\Vault",
-  "watcher_running": true
+  "watcher_running": true,
+  "providers": {
+    "ollama": { "available": true, "models_loaded": ["llama3.2"] },
+    "openai": { "available": true },
+    "gemini": { "available": true },
+    "anthropic": { "available": false, "error": "API key not configured" }
+  },
+  "vector_store": {
+    "type": "sqlite",
+    "documents_indexed": 1234
+  }
+}
+```
+
+---
+
+### Configuration
+
+Get available providers, models, and RAG techniques.
+
+```http
+GET /config
+```
+
+**Response:**
+
+```json
+{
+  "providers": [
+    {
+      "id": "ollama",
+      "name": "Ollama (Local)",
+      "available": true,
+      "base_url": "http://localhost:11434",
+      "models": [
+        {
+          "id": "llama3.2",
+          "name": "Llama 3.2",
+          "context_length": 128000,
+          "available": true
+        }
+      ]
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "available": true,
+      "models": [
+        { "id": "gpt-4o", "name": "GPT-4o", "context_length": 128000 },
+        { "id": "gpt-4o-mini", "name": "GPT-4o Mini", "context_length": 128000 }
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Google Gemini",
+      "available": true,
+      "models": [
+        { "id": "gemini-2.5-flash", "name": "Gemini 2.5 Flash", "context_length": 1000000 },
+        { "id": "gemini-1.5-pro", "name": "Gemini 1.5 Pro", "context_length": 2000000 }
+      ]
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "available": true,
+      "models": [
+        { "id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4", "context_length": 200000 },
+        { "id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet", "context_length": 200000 }
+      ]
+    }
+  ],
+  "rag_techniques": [
+    { "id": "basic", "name": "Basic RAG", "description": "Simple semantic search and retrieval" },
+    { "id": "hybrid", "name": "Hybrid Search", "description": "Combines semantic and keyword search (BM25 + embeddings)" },
+    { "id": "rerank", "name": "Re-ranking", "description": "Uses a cross-encoder reranker model to improve results" },
+    { "id": "hyde", "name": "HyDE", "description": "Hypothetical Document Embeddings - generates hypothetical answer first" },
+    { "id": "multi-query", "name": "Multi-Query", "description": "Generates multiple query variations for better coverage" }
+  ],
+  "defaults": {
+    "provider": "gemini",
+    "model": "gemini-2.5-flash",
+    "rag_technique": "basic"
+  },
+  "embedding_model": "text-embedding-004",
+  "vector_store": "sqlite"
 }
 ```
 
@@ -58,38 +143,119 @@ GET /stats
 
 ---
 
-### Reindex
+## RAG Endpoints
 
-Manually trigger vault reindexing.
+### Ask Question
+
+Ask a question using RAG (Retrieval-Augmented Generation) with provider/model selection.
 
 ```http
-POST /reindex?full=false
+POST /ask
+Content-Type: application/json
 ```
 
-**Parameters:**
+**Request Body:**
 
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `full` | boolean | `false` | If true, rescan all files |
+```json
+{
+  "question": "What are my notes about machine learning?",
+  "conversation_id": "optional-uuid",
+  "provider": "gemini",
+  "model": "gemini-2.5-flash",
+  "rag_technique": "basic",
+  "include_sources": true
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `question` | string | (required) | The question to answer |
+| `conversation_id` | string | null | Optional conversation ID for context |
+| `provider` | string | `"gemini"` | LLM provider (ollama, openai, gemini, anthropic) |
+| `model` | string | null | Specific model ID to use |
+| `rag_technique` | string | `"basic"` | RAG technique (basic, hybrid, rerank, hyde, multi-query) |
+| `include_sources` | boolean | `true` | Include source references |
 
 **Response:**
 
 ```json
 {
-  "status": "completed",
-  "indexed": 15,
-  "errors": 0,
-  "type": "incremental"
+  "answer": "Based on your notes, you have several entries about machine learning...",
+  "sources": [
+    {
+      "path": "notes/ml-basics.md",
+      "title": "ML Basics",
+      "snippet": "Machine learning is a subset of AI that focuses on...",
+      "score": 0.847
+    }
+  ],
+  "conversation_id": "uuid-string",
+  "model_used": "gemini-2.5-flash",
+  "tokens_used": {
+    "prompt": 1500,
+    "completion": 250,
+    "total": 1750
+  }
+}
+```
+
+**Error Response:**
+
+```json
+{
+  "error": "Error message",
+  "code": "PROVIDER_UNAVAILABLE | MODEL_NOT_FOUND | RAG_ERROR"
 }
 ```
 
 ---
 
-## Search Endpoints
+### Semantic Search
+
+Direct semantic search without generating an answer.
+
+```http
+POST /search
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "query": "machine learning algorithms",
+  "limit": 10,
+  "rag_technique": "basic"
+}
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "path": "notes/ml-basics.md",
+      "title": "ML Basics",
+      "snippet": "Machine learning algorithms can be categorized into...",
+      "score": 0.8547,
+      "metadata": {
+        "tags": ["ml", "ai"],
+        "created_at": "2026-01-15T10:00:00",
+        "updated_at": "2026-01-20T14:30:00"
+      }
+    }
+  ],
+  "query_embedding_time_ms": 45.2,
+  "search_time_ms": 12.8
+}
+```
+
+---
 
 ### Full-Text Search
 
-Search across all indexed content using FTS5.
+Search across all indexed content using FTS5 (keyword matching).
 
 ```http
 GET /search?q=<query>&limit=20
@@ -120,9 +286,144 @@ GET /search?q=<query>&limit=20
 }
 ```
 
-**Notes:**
-- Snippets include `<mark>` tags for highlighting
-- Lower rank values indicate better matches (BM25)
+---
+
+## Indexing Endpoints
+
+### Trigger Indexing
+
+Start document indexing for the knowledge base.
+
+```http
+POST /index
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "paths": ["notes/new-file.md", "projects/project-a.md"],
+  "force": false
+}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `paths` | string[] | null | Specific paths to index (null for all) |
+| `force` | boolean | `false` | Force re-indexing even if unchanged |
+
+**Response:**
+
+```json
+{
+  "status": "started",
+  "job_id": "uuid-string",
+  "documents_queued": 42
+}
+```
+
+---
+
+### Get Indexing Status
+
+```http
+GET /index/status
+```
+
+**Response:**
+
+```json
+{
+  "status": "indexing",
+  "documents_indexed": 1234,
+  "documents_pending": 50,
+  "last_indexed_at": "2026-02-01T12:00:00Z",
+  "current_job": {
+    "job_id": "uuid-string",
+    "progress": 0.75,
+    "documents_processed": 30,
+    "documents_total": 40
+  }
+}
+```
+
+---
+
+### Manual Reindex (Legacy)
+
+Manually trigger vault reindexing.
+
+```http
+POST /reindex?full=false
+```
+
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `full` | boolean | `false` | If true, rescan all files |
+
+**Response:**
+
+```json
+{
+  "status": "completed",
+  "indexed": 15,
+  "errors": 0,
+  "type": "incremental"
+}
+```
+
+---
+
+## Embedding Endpoints
+
+### Embedding Statistics
+
+Get embedding generation statistics.
+
+```http
+GET /embeddings/stats
+```
+
+**Response:**
+
+```json
+{
+  "chunk_count": 1500,
+  "embedding_count": 1200,
+  "files_with_embeddings": 45,
+  "pending_chunks": 300
+}
+```
+
+---
+
+### Generate Embeddings
+
+Generate embeddings for pending chunks.
+
+```http
+POST /embeddings/generate?limit=100
+```
+
+**Parameters:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `limit` | integer | `100` | Max chunks to process (1-1000) |
+
+**Response:**
+
+```json
+{
+  "status": "completed",
+  "processed": 100,
+  "failed": 0,
+  "pending_remaining": 200
+}
+```
 
 ---
 
@@ -152,12 +453,6 @@ GET /file?path=<relative-path>
 }
 ```
 
-**Errors:**
-
-| Code | Description |
-|------|-------------|
-| 404 | File not found in index |
-
 ---
 
 ## Metadata Endpoints
@@ -176,10 +471,9 @@ GET /tags
 {
   "tags": [
     {"name": "project", "file_count": 25},
-    {"name": "idea", "file_count": 18},
-    {"name": "todo", "file_count": 12}
+    {"name": "idea", "file_count": 18}
   ],
-  "count": 3
+  "count": 2
 }
 ```
 
@@ -192,12 +486,6 @@ Find files that link to a specific file.
 ```http
 GET /backlinks?path=<relative-path>
 ```
-
-**Parameters:**
-
-| Name | Type | Description |
-|------|------|-------------|
-| `path` | string | Target file path or name |
 
 **Response:**
 
@@ -214,14 +502,14 @@ GET /backlinks?path=<relative-path>
 
 ---
 
-## RAG Endpoints
+## Inbox Endpoints
 
-### Ask Question
+### Process Inbox
 
-Ask a question using RAG (Retrieval-Augmented Generation).
+Process documents in the inbox folder.
 
 ```http
-POST /ask
+POST /inbox/process
 Content-Type: application/json
 ```
 
@@ -229,108 +517,110 @@ Content-Type: application/json
 
 ```json
 {
-  "question": "What are my notes about machine learning?",
-  "include_sources": true
+  "dry_run": false
 }
 ```
-
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `question` | string | (required) | The question to answer |
-| `include_sources` | boolean | `true` | Include source references |
-
-**Response:**
-
-```json
-{
-  "answer": "Based on your notes, you have several entries about machine learning. Your 'ML Basics' note covers supervised and unsupervised learning...",
-  "sources": [
-    {
-      "file_path": "notes/ml-basics.md",
-      "file_title": "ML Basics",
-      "section": "Introduction",
-      "similarity": 0.847
-    },
-    {
-      "file_path": "notes/projects/classifier.md",
-      "file_title": "Image Classifier",
-      "section": "Model Training",
-      "similarity": 0.792
-    }
-  ],
-  "query": "What are my notes about machine learning?"
-}
-```
-
-**Errors:**
-
-| Code | Description |
-|------|-------------|
-| 400 | Empty question |
-| 503 | LLM not configured (missing API key) |
-| 500 | Generation failed |
 
 ---
 
-### Embedding Statistics
-
-Get embedding generation statistics.
+### List Inbox Files
 
 ```http
-GET /embeddings/stats
+GET /inbox/files
 ```
-
-**Response:**
-
-```json
-{
-  "chunk_count": 1500,
-  "embedding_count": 1200,
-  "files_with_embeddings": 45,
-  "pending_chunks": 300
-}
-```
-
-| Field | Description |
-|-------|-------------|
-| `chunk_count` | Total text chunks in database |
-| `embedding_count` | Chunks with embeddings |
-| `files_with_embeddings` | Files that have been embedded |
-| `pending_chunks` | Chunks awaiting embedding |
 
 ---
 
-### Generate Embeddings
+## PostgreSQL Sync Endpoints
 
-Generate embeddings for pending chunks.
+### Sync to PostgreSQL
 
 ```http
-POST /embeddings/generate?limit=100
+POST /sync
+Content-Type: application/json
 ```
 
-**Parameters:**
-
-| Name | Type | Default | Description |
-|------|------|---------|-------------|
-| `limit` | integer | `100` | Max chunks to process (1-1000) |
-
-**Response:**
+**Request Body:**
 
 ```json
 {
-  "status": "completed",
-  "processed": 100,
-  "failed": 0,
-  "pending_remaining": 200
+  "mode": "full"
 }
 ```
 
-**Errors:**
+---
 
-| Code | Description |
-|------|-------------|
-| 503 | LLM not configured |
-| 500 | Embedding generation failed |
+### Sync Stats
+
+```http
+GET /sync/stats
+```
+
+---
+
+## Conversation Endpoints
+
+### Create Conversation
+
+```http
+POST /conversations
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "session_id": "user-123",
+  "title": "Research Chat"
+}
+```
+
+---
+
+### Get Conversation
+
+```http
+GET /conversations/{id}
+```
+
+---
+
+### Add Message
+
+```http
+POST /conversations/{id}/messages
+Content-Type: application/json
+```
+
+**Request Body:**
+
+```json
+{
+  "role": "user",
+  "content": "What about..."
+}
+```
+
+---
+
+### List Conversations
+
+```http
+GET /conversations?session_id=user-123&limit=20
+```
+
+---
+
+## RAG Techniques
+
+| Technique | Description |
+|-----------|-------------|
+| `basic` | Simple semantic search - embed query, retrieve top-k similar documents |
+| `hybrid` | Combines semantic (embeddings) and keyword search (BM25) using RRF |
+| `rerank` | Uses cross-encoder model to re-rank initial results |
+| `hyde` | Generates hypothetical answer first, then searches for similar documents |
+| `multi-query` | Generates query variations for better coverage |
 
 ---
 
@@ -341,7 +631,8 @@ All errors follow this format:
 ```json
 {
   "error": "Error type",
-  "detail": "Detailed error message"
+  "detail": "Detailed error message",
+  "code": "ERROR_CODE"
 }
 ```
 
@@ -349,21 +640,10 @@ All errors follow this format:
 
 | Code | Description |
 |------|-------------|
-| 400 | Bad request (invalid parameters) |
-| 404 | Resource not found |
-| 500 | Internal server error |
-| 503 | Service unavailable (LLM not configured) |
-
----
-
-## Rate Limits
-
-No rate limits are enforced by default. The server runs locally.
-
-For LLM providers:
-- **OpenAI**: Subject to OpenAI rate limits
-- **Gemini**: Subject to Google rate limits
-- **Ollama**: No rate limits (local)
+| `PROVIDER_UNAVAILABLE` | LLM provider not configured or unreachable |
+| `MODEL_NOT_FOUND` | Specified model not available |
+| `RAG_ERROR` | Error in RAG retrieval or generation |
+| `GENERATION_ERROR` | LLM generation failed |
 
 ---
 
@@ -372,16 +652,35 @@ For LLM providers:
 ### cURL
 
 ```bash
-# Search
-curl "http://127.0.0.1:8000/search?q=python"
+# Get configuration
+curl http://127.0.0.1:8000/config
 
-# Ask question
+# Ask with specific provider and technique
 curl -X POST "http://127.0.0.1:8000/ask" \
   -H "Content-Type: application/json" \
-  -d '{"question": "What projects am I working on?"}'
+  -d '{
+    "question": "What projects am I working on?",
+    "provider": "gemini",
+    "model": "gemini-2.5-flash",
+    "rag_technique": "hybrid"
+  }'
 
-# Generate embeddings
-curl -X POST "http://127.0.0.1:8000/embeddings/generate?limit=500"
+# Semantic search
+curl -X POST "http://127.0.0.1:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "machine learning",
+    "limit": 5,
+    "rag_technique": "basic"
+  }'
+
+# Trigger indexing
+curl -X POST "http://127.0.0.1:8000/index" \
+  -H "Content-Type: application/json" \
+  -d '{"force": true}'
+
+# Check indexing status
+curl http://127.0.0.1:8000/index/status
 ```
 
 ### Python
@@ -391,32 +690,43 @@ import httpx
 
 client = httpx.Client(base_url="http://127.0.0.1:8000")
 
-# Search
-results = client.get("/search", params={"q": "python"}).json()
+# Get available config
+config = client.get("/config").json()
+print(f"Available providers: {[p['id'] for p in config['providers']]}")
+print(f"RAG techniques: {[t['id'] for t in config['rag_techniques']]}")
 
-# Ask question
+# Ask with provider selection
 answer = client.post("/ask", json={
-    "question": "What are my main project ideas?"
+    "question": "What are my main project ideas?",
+    "provider": "gemini",
+    "rag_technique": "hybrid"
 }).json()
 
 print(answer["answer"])
+print(f"Model used: {answer['model_used']}")
 for source in answer["sources"]:
-    print(f"  - {source['file_title']} ({source['similarity']:.2f})")
+    print(f"  - {source['title']} ({source['score']:.2f})")
 ```
 
 ### JavaScript
 
 ```javascript
-// Search
-const results = await fetch('http://127.0.0.1:8000/search?q=python')
+// Get configuration
+const config = await fetch('http://127.0.0.1:8000/config')
   .then(r => r.json());
 
-// Ask question
+// Ask with options
 const answer = await fetch('http://127.0.0.1:8000/ask', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ question: 'What projects am I working on?' })
+  body: JSON.stringify({
+    question: 'What projects am I working on?',
+    provider: 'openai',
+    model: 'gpt-4o',
+    rag_technique: 'rerank'
+  })
 }).then(r => r.json());
 
 console.log(answer.answer);
+console.log(`Model: ${answer.model_used}`);
 ```
