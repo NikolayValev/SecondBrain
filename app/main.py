@@ -470,7 +470,7 @@ app.add_middleware(
 )
 
 # Public endpoints that don't require authentication
-PUBLIC_ENDPOINTS = {"/health", "/docs", "/redoc", "/openapi.json"}
+PUBLIC_ENDPOINTS = {"/health", "/config", "/docs", "/redoc", "/openapi.json"}
 
 
 @app.middleware("http")
