@@ -11,9 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
 from app.config import config, Config
@@ -39,6 +40,34 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# API Key Security
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    """
+    Verify API key from X-API-Key header.
+    If API_KEY is not configured, authentication is disabled (development mode).
+    """
+    # If no API key configured, allow all requests (dev mode)
+    if not config.API_KEY:
+        return "dev-mode"
+    
+    if not api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing API key. Include 'X-API-Key' header.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    
+    if api_key != config.API_KEY:
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid API key",
+        )
+    
+    return api_key
 
 
 # Response models
@@ -439,6 +468,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Public endpoints that don't require authentication
+PUBLIC_ENDPOINTS = {"/health", "/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def api_key_middleware(request, call_next):
+    """
+    Middleware to verify API key for all endpoints except public ones.
+    If API_KEY is not configured, all requests are allowed (dev mode).
+    """
+    # Skip authentication for public endpoints
+    if request.url.path in PUBLIC_ENDPOINTS:
+        return await call_next(request)
+    
+    # If no API key configured, allow all requests (dev mode)
+    if not config.API_KEY:
+        return await call_next(request)
+    
+    # Check API key
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing API key. Include 'X-API-Key' header."},
+        )
+    
+    if api_key != config.API_KEY:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Invalid API key"},
+        )
+    
+    return await call_next(request)
 
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])

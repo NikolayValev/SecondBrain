@@ -4,13 +4,65 @@ Complete API documentation for Second Brain.
 
 ## Base URL
 
+**Local:**
 ```
 http://127.0.0.1:8000
+```
+
+**Public (via Cloudflare Tunnel):**
+```
+https://brain.nikolayvalev.com
 ```
 
 Interactive documentation available at:
 - **Swagger UI**: http://127.0.0.1:8000/docs
 - **ReDoc**: http://127.0.0.1:8000/redoc
+
+---
+
+## Authentication
+
+All endpoints except public ones require API key authentication via the `X-API-Key` header.
+
+### Public Endpoints (No Auth Required)
+- `GET /health` - Health check
+- `GET /docs` - Swagger UI
+- `GET /redoc` - ReDoc documentation
+- `GET /openapi.json` - OpenAPI schema
+
+### Protected Endpoints
+All other endpoints require the `X-API-Key` header.
+
+### Example Request
+```bash
+curl -X GET "https://brain.nikolayvalev.com/stats" \
+  -H "X-API-Key: your-api-key-here"
+```
+
+### Error Responses
+
+**401 Unauthorized** - Missing API key:
+```json
+{
+  "detail": "Missing API key. Include 'X-API-Key' header."
+}
+```
+
+**403 Forbidden** - Invalid API key:
+```json
+{
+  "detail": "Invalid API key"
+}
+```
+
+### Configuration
+
+Set the API key in your `.env` file:
+```env
+API_KEY=your-secret-api-key
+```
+
+Leave `API_KEY` empty to disable authentication (development mode only).
 
 ---
 

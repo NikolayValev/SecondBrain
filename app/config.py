@@ -36,6 +36,7 @@ class Config:
     # API settings
     API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
+    API_KEY: str = os.getenv("API_KEY", "")  # Required for authenticated endpoints
     
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")

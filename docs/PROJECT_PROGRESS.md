@@ -98,6 +98,13 @@ Second Brain is a Python-powered knowledge management system that indexes an Obs
 ### 8. Frontend API Compatibility ✅ (NEW)
 - **CORS enabled** for localhost:3000
 - **GET /config** - Returns available providers, models, RAG techniques
+
+### 9. API Security & Public Access ✅ (NEW)
+- **API Key Authentication** via `X-API-Key` header
+- **Cloudflare Tunnel** for secure public access
+- **Public URL**: https://brain.nikolayvalev.com
+- Public endpoints: `/health`, `/docs`, `/redoc`, `/openapi.json`
+- All other endpoints require authentication
 - **Enhanced /health** - Provider status and vector store info
 - **POST /index** - Background job indexing with job_id
 - **GET /index/status** - Indexing progress tracking
@@ -170,6 +177,7 @@ RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 # API
 API_HOST=127.0.0.1
 API_PORT=8000
+API_KEY=your-secret-api-key  # Leave empty to disable auth (dev mode)
 ```
 
 ---
@@ -226,13 +234,20 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 ### Example API Calls
+
+All protected endpoints require the `X-API-Key` header:
+
 ```bash
-# Get available configuration
-curl http://localhost:8000/config
+# Health check (public - no auth needed)
+curl https://brain.nikolayvalev.com/health
+
+# Get available configuration (requires API key)
+curl -H "X-API-Key: $API_KEY" https://brain.nikolayvalev.com/config
 
 # Ask with specific provider
-curl -X POST http://localhost:8000/ask \
+curl -X POST https://brain.nikolayvalev.com/ask \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{
     "question": "What are my project ideas?",
     "provider": "gemini",
@@ -240,13 +255,15 @@ curl -X POST http://localhost:8000/ask \
   }'
 
 # Semantic search
-curl -X POST http://localhost:8000/search \
+curl -X POST https://brain.nikolayvalev.com/search \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{"query": "machine learning", "limit": 5}'
 
 # Trigger indexing
-curl -X POST http://localhost:8000/index \
+curl -X POST https://brain.nikolayvalev.com/index \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: $API_KEY" \
   -d '{"force": true}'
 ```
 
@@ -286,7 +303,14 @@ python -m pytest tests/ --cov=app
 
 ## Changelog
 
-### 2026-02-01 (Current)
+### 2026-02-08 (Current)
+- **Added API Key Authentication** via `X-API-Key` header middleware
+- **Added Cloudflare Tunnel** for secure public access at https://brain.nikolayvalev.com
+- Public endpoints: `/health`, `/docs`, `/redoc`, `/openapi.json` (no auth required)
+- All other endpoints require valid API key
+- API key configurable via `API_KEY` environment variable
+
+### 2026-02-01
 - **Added multi-provider LLM support** (OpenAI, Gemini, Anthropic, Ollama)
 - **Added 5 RAG techniques** (Basic, Hybrid, Rerank, HyDE, Multi-Query)
 - **Added GET /config endpoint** for frontend configuration
@@ -318,6 +342,8 @@ python -m pytest tests/ --cov=app
 4. Use `/search` for direct semantic search
 
 ### Future Enhancements
+- [x] API Key authentication (completed 2026-02-08)
+- [x] Public access via Cloudflare Tunnel (completed 2026-02-08)
 - [ ] Streaming responses (SSE) for /ask
 - [ ] Token usage tracking
 - [ ] Custom system prompts per conversation
