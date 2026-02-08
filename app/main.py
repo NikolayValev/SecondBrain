@@ -104,10 +104,39 @@ class SearchResponse(BaseModel):
 
 
 class FileResponse(BaseModel):
-    """File content response."""
+    """File content response with metadata."""
     path: str
     title: str
     content: str
+    tags: list[str] = []
+    created_at: Optional[str] = None
+    modified_at: Optional[str] = None
+    frontmatter: dict = {}
+
+
+class BacklinkItem(BaseModel):
+    """A single backlink item."""
+    path: str
+    title: str
+
+
+class BacklinksResponse(BaseModel):
+    """Response for backlinks endpoint."""
+    target: str
+    backlinks: list[BacklinkItem]
+    count: int
+
+
+class TagItem(BaseModel):
+    """A single tag with usage count."""
+    name: str
+    file_count: int
+
+
+class TagsResponse(BaseModel):
+    """Response for tags endpoint."""
+    tags: list[TagItem]
+    count: int
 
 
 class ErrorResponse(BaseModel):
@@ -779,8 +808,10 @@ async def get_file(
     path: str = Query(..., description="Relative path to the file in the vault")
 ):
     """
-    Get full content of a specific file.
+    Get full content of a specific file with metadata.
+    
     Path should be relative to the vault root.
+    Returns the file content along with tags, timestamps, and frontmatter.
     """
     file_record = db.get_file_by_path(path)
     
@@ -790,18 +821,58 @@ async def get_file(
             detail=f"File not found: {path}"
         )
     
+    # Get tags for this file
+    tags = []
+    with db.cursor() as cur:
+        cur.execute("""
+            SELECT t.name FROM tags t
+            JOIN file_tags ft ON t.id = ft.tag_id
+            JOIN files f ON ft.file_id = f.id
+            WHERE f.path = ?
+        """, (path,))
+        tags = [row["name"] for row in cur.fetchall()]
+    
+    # Convert mtime to ISO format
+    mtime = file_record.get("mtime")
+    modified_at = datetime.fromtimestamp(mtime).isoformat() if mtime else None
+    
+    # Parse frontmatter from content
+    frontmatter = {}
+    content = file_record["content"]
+    if content.startswith("---"):
+        try:
+            import yaml
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                frontmatter = yaml.safe_load(parts[1]) or {}
+        except Exception:
+            pass
+    
+    # Use frontmatter created date if available, otherwise use mtime
+    created_at = frontmatter.get("created") or frontmatter.get("date") or modified_at
+    if isinstance(created_at, datetime):
+        created_at = created_at.isoformat()
+    elif created_at and not isinstance(created_at, str):
+        created_at = str(created_at)
+    
     return FileResponse(
         path=file_record["path"],
         title=file_record["title"],
-        content=file_record["content"]
+        content=file_record["content"],
+        tags=tags,
+        created_at=created_at,
+        modified_at=modified_at,
+        frontmatter=frontmatter,
     )
 
 
-@app.get("/tags", tags=["Metadata"])
+@app.get("/tags", response_model=TagsResponse, tags=["Metadata"])
 async def list_tags():
     """
-    List all tags in the vault.
-    Useful for exploring the knowledge graph.
+    List all tags in the vault with usage counts.
+    
+    Returns tags sorted by usage count (descending), then alphabetically.
+    Useful for exploring the knowledge graph and tag-based navigation.
     """
     with db.cursor() as cur:
         cur.execute("""
@@ -811,18 +882,20 @@ async def list_tags():
             GROUP BY t.id
             ORDER BY file_count DESC, t.name
         """)
-        tags = [{"name": row["name"], "file_count": row["file_count"]} for row in cur.fetchall()]
+        tags = [TagItem(name=row["name"], file_count=row["file_count"]) for row in cur.fetchall()]
     
-    return {"tags": tags, "count": len(tags)}
+    return TagsResponse(tags=tags, count=len(tags))
 
 
-@app.get("/backlinks", tags=["Metadata"])
+@app.get("/backlinks", response_model=BacklinksResponse, tags=["Metadata"])
 async def get_backlinks(
     path: str = Query(..., description="Relative path or filename to find backlinks for")
 ):
     """
     Find all files that link to a specific file.
-    Useful for exploring connections in the knowledge graph.
+    
+    Searches for wikilinks ([[filename]]) and markdown links that reference
+    the target file. Useful for exploring connections in the knowledge graph.
     """
     # Normalize path for matching
     target_name = Path(path).stem
@@ -836,9 +909,9 @@ async def get_backlinks(
             WHERE l.to_path = ? OR l.to_path = ? OR l.to_path LIKE ?
         """, (path, target_name, f"%{target_name}%"))
         
-        backlinks = [{"path": row["path"], "title": row["title"]} for row in cur.fetchall()]
+        backlinks = [BacklinkItem(path=row["path"], title=row["title"]) for row in cur.fetchall()]
     
-    return {"target": path, "backlinks": backlinks, "count": len(backlinks)}
+    return BacklinksResponse(target=path, backlinks=backlinks, count=len(backlinks))
 
 
 @app.post("/reindex", tags=["System"])

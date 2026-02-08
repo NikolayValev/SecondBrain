@@ -355,9 +355,17 @@ Content (first 2000 chars):
             ]
             
             category_response = await llm.chat(messages, temperature=0.3)
+            
+            if not category_response or not category_response.strip():
+                logger.warning(f"LLM returned empty response for '{file_path.name}', using default destination")
+                return self.config.default_destination, []
+            
             category_key = category_response.strip().lower().replace('"', '').replace("'", "")
             
             # Map to destination folder
+            if category_key not in llm_config.available_categories:
+                logger.warning(f"LLM returned unknown category '{category_key}' for '{file_path.name}', using default. Available: {list(llm_config.available_categories.keys())}")
+            
             destination = llm_config.available_categories.get(
                 category_key, 
                 self.config.default_destination
@@ -402,7 +410,7 @@ Content (first 2000 chars):
             return destination, suggested_tags
             
         except Exception as e:
-            logger.error(f"LLM classification failed: {e}")
+            logger.error(f"LLM classification failed for '{file_path.name}': {type(e).__name__}: {e}")
             return self.config.default_destination, []
     
     async def classify_document(

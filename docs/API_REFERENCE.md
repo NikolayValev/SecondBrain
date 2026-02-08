@@ -483,7 +483,7 @@ POST /embeddings/generate?limit=100
 
 ### Get File Content
 
-Retrieve the full content of a file.
+Retrieve the full content and metadata of a file.
 
 ```http
 GET /file?path=<relative-path>
@@ -501,9 +501,32 @@ GET /file?path=<relative-path>
 {
   "path": "notes/daily/2026-01-30.md",
   "title": "Daily Note - January 30",
-  "content": "# Daily Note\n\n## Tasks\n- [x] Review code..."
+  "content": "---\ntags: [daily, journal]\ncreated: 2026-01-30\n---\n\n# Daily Note\n\n## Tasks\n- [x] Review code...",
+  "tags": ["daily", "journal"],
+  "created_at": "2026-01-30T00:00:00",
+  "modified_at": "2026-01-30T18:45:00",
+  "frontmatter": {
+    "tags": ["daily", "journal"],
+    "created": "2026-01-30"
+  }
 }
 ```
+
+**Response Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `path` | string | Relative file path |
+| `title` | string | Document title |
+| `content` | string | Full markdown content including frontmatter |
+| `tags` | string[] | List of tags from frontmatter and inline tags |
+| `created_at` | string | ISO 8601 creation date (from frontmatter or file mtime) |
+| `modified_at` | string | ISO 8601 modification date (from file mtime) |
+| `frontmatter` | object | Parsed YAML frontmatter as key-value pairs |
+
+**Error Responses:**
+
+- `404 Not Found` - File does not exist in the vault
 
 ---
 

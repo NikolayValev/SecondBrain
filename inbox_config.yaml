@@ -70,6 +70,45 @@ rules:
   add_tags:
   - fitness
   priority: 8
+- name: books_2026
+  destination_folder: 09_Reading/2026
+  any_tags:
+  - book
+  - reading
+  frontmatter_matches:
+    year: "2026"
+  add_tags:
+  - book
+  priority: 9
+- name: books_2025
+  destination_folder: 09_Reading/2025
+  any_tags:
+  - book
+  - reading
+  frontmatter_matches:
+    year: "2025"
+  add_tags:
+  - book
+  priority: 9
+- name: books_2024
+  destination_folder: 09_Reading/2024
+  any_tags:
+  - book
+  - reading
+  frontmatter_matches:
+    year: "2024"
+  add_tags:
+  - book
+  priority: 9
+- name: books_catchall
+  destination_folder: 09_Reading
+  any_tags:
+  - book
+  - reading
+  - literature
+  add_tags:
+  - book
+  priority: 5
 llm_config:
   enabled: true
   suggest_tags: true
@@ -89,3 +128,7 @@ llm_config:
     fitness: 14_Fitness
     philosophy: 15_Philosophy
     professional: 16_Professional
+    books: 09_Reading
+    reading: 09_Reading
+    literature: 09_Reading
+    unsorted: 00_Inbox/Unsorted
