@@ -5,6 +5,7 @@ Manages SQLite database with FTS5 for full-text search.
 
 import sqlite3
 import logging
+import threading
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
@@ -22,6 +23,7 @@ class Database:
         self.db_path = db_path or config.DATABASE_PATH
         self._connection: Optional[sqlite3.Connection] = None
         self._last_indexed: Optional[datetime] = None
+        self._lock = threading.RLock()  # Reentrant lock for thread safety
     
     def connect(self) -> sqlite3.Connection:
         """Get or create database connection."""
@@ -43,15 +45,33 @@ class Database:
     
     @contextmanager
     def cursor(self) -> Generator[sqlite3.Cursor, None, None]:
-        """Context manager for database cursor with auto-commit."""
-        conn = self.connect()
-        cursor = conn.cursor()
-        try:
-            yield cursor
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+        """Context manager for database cursor with auto-commit and thread safety."""
+        with self._lock:
+            conn = self.connect()
+            cursor = conn.cursor()
+            try:
+                yield cursor
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    
+    @contextmanager
+    def transaction(self) -> Generator[sqlite3.Cursor, None, None]:
+        """
+        Context manager for explicit transactions spanning multiple operations.
+        Use this when you need multiple database operations to be atomic.
+        """
+        with self._lock:
+            conn = self.connect()
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            try:
+                yield cursor
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     
     def initialize(self) -> None:
         """Create database schema if not exists."""
@@ -276,6 +296,80 @@ class Database:
                 INSERT INTO links (from_file_id, to_path)
                 VALUES (?, ?)
             """, (from_file_id, to_path))
+    
+    def index_file_atomic(
+        self,
+        path: str,
+        mtime: float,
+        title: str,
+        content: str,
+        sections: list[dict],
+        tags: list[str],
+        links: list[str]
+    ) -> int:
+        """
+        Index a file with all its relations in a single atomic transaction.
+        
+        Args:
+            path: File path relative to vault
+            mtime: File modification time
+            title: File title
+            content: Full file content
+            sections: List of dicts with keys: heading, level, content
+            tags: List of tag names
+            links: List of target paths for outbound links
+            
+        Returns:
+            The file ID
+        """
+        with self.transaction() as cur:
+            # Upsert file
+            cur.execute("""
+                INSERT INTO files (path, mtime, title, content)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(path) DO UPDATE SET
+                    mtime = excluded.mtime,
+                    title = excluded.title,
+                    content = excluded.content
+            """, (path, mtime, title, content))
+            
+            cur.execute("SELECT id FROM files WHERE path = ?", (path,))
+            file_id = cur.fetchone()["id"]
+            
+            # Clear existing relations
+            cur.execute("DELETE FROM sections WHERE file_id = ?", (file_id,))
+            cur.execute("DELETE FROM file_tags WHERE file_id = ?", (file_id,))
+            cur.execute("DELETE FROM links WHERE from_file_id = ?", (file_id,))
+            
+            # Add sections
+            for section in sections:
+                cur.execute("""
+                    INSERT INTO sections (file_id, heading, level, content)
+                    VALUES (?, ?, ?, ?)
+                """, (file_id, section["heading"], section["level"], section["content"]))
+            
+            # Add tags
+            for tag_name in tags:
+                cur.execute("SELECT id FROM tags WHERE name = ?", (tag_name,))
+                row = cur.fetchone()
+                if row:
+                    tag_id = row["id"]
+                else:
+                    cur.execute("INSERT INTO tags (name) VALUES (?)", (tag_name,))
+                    tag_id = cur.lastrowid
+                cur.execute("""
+                    INSERT OR IGNORE INTO file_tags (file_id, tag_id)
+                    VALUES (?, ?)
+                """, (file_id, tag_id))
+            
+            # Add links
+            for to_path in links:
+                cur.execute("""
+                    INSERT INTO links (from_file_id, to_path)
+                    VALUES (?, ?)
+                """, (file_id, to_path))
+            
+            return file_id
     
     def search(self, query: str, limit: int = 20) -> list[dict]:
         """Full-text search across sections."""

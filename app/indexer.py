@@ -71,34 +71,26 @@ class Indexer:
             parsed = self.parser.parse_file(file_path)
             mtime = file_path.stat().st_mtime
             
-            # Upsert file record
-            file_id = self.db.upsert_file(
+            # Convert sections to dicts for the atomic method
+            sections = [
+                {
+                    "heading": section.heading,
+                    "level": section.level,
+                    "content": section.content
+                }
+                for section in parsed.sections
+            ]
+            
+            # Index everything in a single atomic transaction
+            file_id = self.db.index_file_atomic(
                 path=rel_path,
                 mtime=mtime,
                 title=parsed.title,
-                content=parsed.content
+                content=parsed.content,
+                sections=sections,
+                tags=list(parsed.tags),
+                links=list(parsed.links)
             )
-            
-            # Clear existing relations
-            self.db.clear_file_relations(file_id)
-            
-            # Add sections
-            for section in parsed.sections:
-                self.db.add_section(
-                    file_id=file_id,
-                    heading=section.heading,
-                    level=section.level,
-                    content=section.content
-                )
-            
-            # Add tags
-            for tag_name in parsed.tags:
-                tag_id = self.db.get_or_create_tag(tag_name)
-                self.db.add_file_tag(file_id, tag_id)
-            
-            # Add links
-            for link in parsed.links:
-                self.db.add_link(file_id, link)
             
             logger.debug(
                 f"Indexed {rel_path}: {len(parsed.sections)} sections, "

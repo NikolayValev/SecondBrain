@@ -154,6 +154,33 @@ class InboxProcessResponse(BaseModel):
     results: list[InboxFileResult]
 
 
+class InboxFileInfo(BaseModel):
+    """Information about a file in the inbox."""
+    name: str
+    path: str
+    size_bytes: int
+    modified: str
+    type: str = "file"
+
+
+class InboxFolderInfo(BaseModel):
+    """Information about a folder in the inbox."""
+    name: str
+    path: str
+    type: str = "folder"
+    files: list[InboxFileInfo] = []
+    folders: list["InboxFolderInfo"] = []
+
+
+class InboxContentsResponse(BaseModel):
+    """Full contents of the inbox folder."""
+    inbox_path: str
+    total_files: int
+    total_folders: int
+    root_files: list[InboxFileInfo]
+    folders: list[InboxFolderInfo]
+
+
 class SourceInfo(BaseModel):
     """Source information for RAG response."""
     file_path: str
@@ -1082,6 +1109,79 @@ async def list_inbox_files():
             for f in files
         ]
     }
+
+
+@app.get("/inbox/contents", response_model=InboxContentsResponse, tags=["Inbox"])
+async def get_inbox_contents():
+    """
+    Get the full contents of the inbox folder including all subfolders.
+    
+    Returns a hierarchical view of all files and folders in 00_Inbox.
+    """
+    inbox_path = config.VAULT_PATH / "00_Inbox"
+    
+    if not inbox_path.exists():
+        raise HTTPException(status_code=404, detail="Inbox folder (00_Inbox) not found")
+    
+    def get_file_info(file_path: Path) -> InboxFileInfo:
+        """Create file info from path."""
+        stat = file_path.stat()
+        return InboxFileInfo(
+            name=file_path.name,
+            path=str(file_path.relative_to(config.VAULT_PATH)),
+            size_bytes=stat.st_size,
+            modified=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+        )
+    
+    def scan_folder(folder_path: Path) -> tuple[list[InboxFileInfo], list[InboxFolderInfo]]:
+        """Recursively scan a folder for files and subfolders."""
+        files = []
+        folders = []
+        
+        try:
+            for item in sorted(folder_path.iterdir()):
+                if item.name.startswith('.'):
+                    continue  # Skip hidden files/folders
+                
+                if item.is_file():
+                    if item.suffix.lower() in ('.md', '.markdown'):
+                        files.append(get_file_info(item))
+                elif item.is_dir():
+                    sub_files, sub_folders = scan_folder(item)
+                    folder_info = InboxFolderInfo(
+                        name=item.name,
+                        path=str(item.relative_to(config.VAULT_PATH)),
+                        files=sub_files,
+                        folders=sub_folders,
+                    )
+                    folders.append(folder_info)
+        except PermissionError:
+            logger.warning(f"Permission denied accessing: {folder_path}")
+        
+        return files, folders
+    
+    root_files, sub_folders = scan_folder(inbox_path)
+    
+    # Count total files and folders
+    def count_items(folders: list[InboxFolderInfo]) -> tuple[int, int]:
+        total_files = 0
+        total_folders = len(folders)
+        for folder in folders:
+            total_files += len(folder.files)
+            sub_files, sub_folder_count = count_items(folder.folders)
+            total_files += sub_files
+            total_folders += sub_folder_count
+        return total_files, total_folders
+    
+    nested_files, nested_folders = count_items(sub_folders)
+    
+    return InboxContentsResponse(
+        inbox_path=str(inbox_path.relative_to(config.VAULT_PATH)),
+        total_files=len(root_files) + nested_files,
+        total_folders=nested_folders,
+        root_files=root_files,
+        folders=sub_folders,
+    )
 
 
 # =============================================================================
