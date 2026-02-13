@@ -59,10 +59,10 @@ curl -X GET "https://brain.nikolayvalev.com/stats" \
 
 Set the API key in your `.env` file:
 ```env
-API_KEY=your-secret-api-key
+BRAIN_API_KEY=your-secret-api-key
 ```
 
-Leave `API_KEY` empty to disable authentication (development mode only).
+Leave `BRAIN_API_KEY` empty to disable authentication (development mode only).
 
 ---
 

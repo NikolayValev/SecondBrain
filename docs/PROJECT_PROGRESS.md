@@ -177,7 +177,7 @@ RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
 # API
 API_HOST=127.0.0.1
 API_PORT=8000
-API_KEY=your-secret-api-key  # Leave empty to disable auth (dev mode)
+BRAIN_API_KEY=your-secret-api-key  # Leave empty to disable auth (dev mode)
 ```
 
 ---
