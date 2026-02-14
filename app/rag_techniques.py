@@ -68,6 +68,18 @@ class RAGTechnique(ABC):
         """
         pass
 
+    def _build_context_text(self, results: list[SearchResult]) -> str:
+        """Build formatted context string from search results."""
+        parts = []
+        for i, result in enumerate(results, 1):
+            header = f"[Source {i}: {result.file_title}"
+            if result.section_heading:
+                header += f" > {result.section_heading}"
+            header += f" (path: {result.file_path})"
+            header += "]"
+            parts.append(f"{header}\n{result.chunk_content}\n")
+        return "\n".join(parts)
+
 
 class BasicRAG(RAGTechnique):
     """
@@ -118,17 +130,6 @@ class BasicRAG(RAGTechnique):
             technique=self.id,
             metadata={"query_embedded": True}
         )
-    
-    def _build_context_text(self, results: list[SearchResult]) -> str:
-        """Build formatted context string from search results."""
-        parts = []
-        for i, result in enumerate(results, 1):
-            header = f"[Source {i}: {result.file_title}"
-            if result.section_heading:
-                header += f" > {result.section_heading}"
-            header += "]"
-            parts.append(f"{header}\n{result.chunk_content}\n")
-        return "\n".join(parts)
 
 
 class HybridRAG(RAGTechnique):
@@ -248,17 +249,6 @@ class HybridRAG(RAGTechnique):
                 seen_files[file_path] = seen_files.get(file_path, 0) + 1
         
         return results
-    
-    def _build_context_text(self, results: list[SearchResult]) -> str:
-        """Build formatted context string from search results."""
-        parts = []
-        for i, result in enumerate(results, 1):
-            header = f"[Source {i}: {result.file_title}"
-            if result.section_heading:
-                header += f" > {result.section_heading}"
-            header += "]"
-            parts.append(f"{header}\n{result.chunk_content}\n")
-        return "\n".join(parts)
 
 
 class RerankRAG(RAGTechnique):
@@ -364,16 +354,6 @@ class RerankRAG(RAGTechnique):
             technique=self.id,
             metadata={"reranked": True, "candidates": len(candidates)}
         )
-    
-    def _build_context_text(self, results: list[SearchResult]) -> str:
-        parts = []
-        for i, result in enumerate(results, 1):
-            header = f"[Source {i}: {result.file_title}"
-            if result.section_heading:
-                header += f" > {result.section_heading}"
-            header += "]"
-            parts.append(f"{header}\n{result.chunk_content}\n")
-        return "\n".join(parts)
 
 
 class HyDERAG(RAGTechnique):
@@ -466,16 +446,6 @@ Hypothetical document passage:"""
         except Exception as e:
             logger.error(f"Failed to generate hypothetical: {e}")
             return query  # Fallback to original query
-    
-    def _build_context_text(self, results: list[SearchResult]) -> str:
-        parts = []
-        for i, result in enumerate(results, 1):
-            header = f"[Source {i}: {result.file_title}"
-            if result.section_heading:
-                header += f" > {result.section_heading}"
-            header += "]"
-            parts.append(f"{header}\n{result.chunk_content}\n")
-        return "\n".join(parts)
 
 
 class MultiQueryRAG(RAGTechnique):
@@ -577,16 +547,6 @@ Variations:"""
         except Exception as e:
             logger.error(f"Failed to generate variations: {e}")
             return []
-    
-    def _build_context_text(self, results: list[SearchResult]) -> str:
-        parts = []
-        for i, result in enumerate(results, 1):
-            header = f"[Source {i}: {result.file_title}"
-            if result.section_heading:
-                header += f" > {result.section_heading}"
-            header += "]"
-            parts.append(f"{header}\n{result.chunk_content}\n")
-        return "\n".join(parts)
 
 
 # Registry of available techniques

@@ -68,6 +68,11 @@ class Config:
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
     
+    # Embedding provider override (for providers like Anthropic that lack embedding APIs)
+    # If set, embeddings use this provider instead of the chat LLM_PROVIDER.
+    # Valid values: "openai", "gemini", "ollama", or empty (use LLM_PROVIDER).
+    EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "")
+    
     # Common LLM settings
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))

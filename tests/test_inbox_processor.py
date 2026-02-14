@@ -49,7 +49,7 @@ def basic_config(temp_vault: Path) -> InboxConfig:
 @pytest.fixture
 def inbox_processor_fixture(temp_vault: Path, basic_config: InboxConfig) -> InboxProcessor:
     """Create an inbox processor with temp vault."""
-    with patch('app.inbox_processor.config') as mock_config:
+    with patch('app.inbox_processor.Config') as mock_config:
         mock_config.VAULT_PATH = temp_vault
         processor = InboxProcessor(basic_config)
         processor.vault_path = temp_vault
@@ -76,7 +76,7 @@ class TestClassificationRule:
         config = InboxConfig()
         config.rules = [rule]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -96,7 +96,7 @@ class TestClassificationRule:
         config = InboxConfig()
         config.rules = [rule]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -120,7 +120,7 @@ class TestClassificationRule:
         )
         
         config = InboxConfig()
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -142,7 +142,7 @@ class TestClassificationRule:
         )
         
         config = InboxConfig()
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -170,7 +170,7 @@ class TestClassificationRule:
         )
         
         config = InboxConfig()
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -192,7 +192,7 @@ class TestClassificationRule:
         )
         
         config = InboxConfig()
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -218,7 +218,7 @@ class TestClassificationRule:
         config = InboxConfig()
         config.rules = [low_priority, high_priority]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = Path("/fake")
             processor = InboxProcessor(config)
         
@@ -242,7 +242,7 @@ class TestInboxProcessorFileDiscovery:
         config = InboxConfig()
         config.inbox_folder = "00_Inbox"
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -261,7 +261,7 @@ class TestInboxProcessorFileDiscovery:
         config.inbox_folder = "00_Inbox"
         config.ignore_patterns = [r"^\."]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -280,7 +280,7 @@ class TestInboxProcessorFileDiscovery:
         config.inbox_folder = "00_Inbox"
         config.ignore_patterns = [r"template"]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -301,7 +301,7 @@ class TestInboxProcessorFileDiscovery:
         config = InboxConfig()
         config.inbox_folder = "00_Inbox"
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -316,7 +316,7 @@ class TestInboxProcessorFileDiscovery:
         config = InboxConfig()
         config.inbox_folder = "00_Inbox"
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -329,7 +329,7 @@ class TestInboxProcessorFileDiscovery:
         config = InboxConfig()
         config.inbox_folder = "NonExistent_Inbox"
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -349,7 +349,7 @@ class TestConflictResolution:
         config = InboxConfig()
         config.conflict_resolution = ConflictResolution.RENAME
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -367,7 +367,7 @@ class TestConflictResolution:
         config = InboxConfig()
         config.conflict_resolution = ConflictResolution.SKIP
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -386,7 +386,7 @@ class TestConflictResolution:
         config = InboxConfig()
         config.conflict_resolution = ConflictResolution.OVERWRITE
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -404,7 +404,7 @@ class TestConflictResolution:
         config = InboxConfig()
         config.conflict_resolution = ConflictResolution.RENAME
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -434,7 +434,7 @@ tags:
         config.metadata_action = MetadataAction.MERGE
         config.global_frontmatter = {}
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
         
@@ -462,7 +462,7 @@ author: Me
         config.metadata_action = MetadataAction.PRESERVE
         config.global_frontmatter = {}
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
         
@@ -484,7 +484,7 @@ author: Me
         config = InboxConfig()
         config.metadata_action = MetadataAction.SKIP
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
         
@@ -500,7 +500,7 @@ author: Me
         config.metadata_action = MetadataAction.MERGE
         config.global_frontmatter = {"processed_date": None, "source": "inbox"}
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
         
@@ -526,7 +526,7 @@ class TestProcessFile:
         config.classification_method = ClassificationMethod.RULES_ONLY
         config.llm_config.enabled = False
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -553,7 +553,7 @@ class TestProcessFile:
         config.metadata_action = MetadataAction.SKIP
         config.llm_config.enabled = False
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -588,7 +588,7 @@ class TestProcessFile:
             )
         ]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -615,7 +615,7 @@ class TestProcessFile:
         config.metadata_action = MetadataAction.SKIP
         config.llm_config.enabled = False
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -645,7 +645,7 @@ class TestProcessInbox:
         config.classification_method = ClassificationMethod.RULES_ONLY
         config.llm_config.enabled = False
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -669,7 +669,7 @@ class TestProcessInbox:
         config.classification_method = ClassificationMethod.RULES_ONLY
         config.llm_config.enabled = False
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -706,7 +706,7 @@ class TestClassificationMethods:
             )
         ]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault
@@ -735,7 +735,7 @@ class TestClassificationMethods:
             )
         ]
         
-        with patch('app.inbox_processor.config') as mock_config:
+        with patch('app.inbox_processor.Config') as mock_config:
             mock_config.VAULT_PATH = temp_vault
             processor = InboxProcessor(config)
             processor.vault_path = temp_vault

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Optional, Callable
 from enum import Enum
 
-from app.config import config, Config
+from app.config import Config
 from app.parser import parser, ParsedMarkdown
 from app.indexer import indexer
 from app.llm import get_llm_provider
@@ -216,7 +216,7 @@ class InboxProcessor:
     
     def __init__(self, inbox_config: Optional[InboxConfig] = None):
         self.config = inbox_config or InboxConfig()
-        self.vault_path = config.VAULT_PATH
+        self.vault_path = Config.VAULT_PATH
         self.llm = None
         self._compiled_ignore_patterns: list[re.Pattern] = []
         self._compile_patterns()

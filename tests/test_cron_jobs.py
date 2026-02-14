@@ -260,7 +260,7 @@ class TestRunInboxProcessing:
             config.llm_config.enabled = False
             mock_create_config.return_value = config
             
-            with patch('app.inbox_processor.config') as mock_app_config:
+            with patch('app.inbox_processor.Config') as mock_app_config:
                 mock_app_config.VAULT_PATH = temp_vault
                 
                 result = await run_inbox_processing(dry_run=True)
@@ -303,7 +303,7 @@ class TestRunInboxProcessing:
             mock_config_class.VAULT_PATH = temp_vault
             mock_db.initialize = MagicMock()
             
-            with patch('app.inbox_processor.config') as mock_app_config:
+            with patch('app.inbox_processor.Config') as mock_app_config:
                 mock_app_config.VAULT_PATH = temp_vault
                 
                 result = await run_inbox_processing(config_path=config_path, dry_run=True)

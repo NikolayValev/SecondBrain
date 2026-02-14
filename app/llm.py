@@ -1,10 +1,11 @@
 """
 LLM Service module for Second Brain.
-Provides a unified interface for OpenAI, Gemini, and Ollama providers.
+Provides a unified interface for OpenAI, Gemini, Ollama, and Anthropic providers.
 """
 
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import AsyncIterator, Optional
 
 import httpx
@@ -12,6 +13,21 @@ import httpx
 from app.config import Config
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TokenUsage:
+    """Token usage information from an LLM call."""
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
+@dataclass
+class ChatResult:
+    """Result from a chat completion, including token usage."""
+    content: str
+    usage: TokenUsage = field(default_factory=TokenUsage)
 
 
 class LLMProvider(ABC):
@@ -36,6 +52,21 @@ class LLMProvider(ABC):
             The assistant's response text.
         """
         pass
+
+    async def chat_with_usage(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> ChatResult:
+        """
+        Send a chat completion and return both text and token usage.
+
+        Default implementation calls :meth:`chat` and returns zero usage.
+        Providers should override to extract real token counts.
+        """
+        content = await self.chat(messages, temperature, max_tokens)
+        return ChatResult(content=content)
 
     async def stream_chat(
         self,
@@ -100,13 +131,30 @@ class OpenAIProvider(LLMProvider):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
+        result = await self.chat_with_usage(messages, temperature, max_tokens)
+        return result.content
+
+    async def chat_with_usage(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> ChatResult:
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=messages,
             temperature=temperature or self.default_temperature,
             max_tokens=max_tokens or self.default_max_tokens,
         )
-        return response.choices[0].message.content or ""
+        content = response.choices[0].message.content or ""
+        usage = TokenUsage()
+        if response.usage:
+            usage = TokenUsage(
+                prompt=response.usage.prompt_tokens or 0,
+                completion=response.usage.completion_tokens or 0,
+                total=response.usage.total_tokens or 0,
+            )
+        return ChatResult(content=content, usage=usage)
 
     async def stream_chat(
         self,
@@ -161,6 +209,15 @@ class GeminiProvider(LLMProvider):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
+        result = await self.chat_with_usage(messages, temperature, max_tokens)
+        return result.content
+
+    async def chat_with_usage(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> ChatResult:
         # Convert messages to Gemini format
         gemini_messages = []
         for msg in messages:
@@ -203,7 +260,15 @@ class GeminiProvider(LLMProvider):
             contents=contents,
             config=config,
         )
-        return response.text
+        usage = TokenUsage()
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            um = response.usage_metadata
+            usage = TokenUsage(
+                prompt=getattr(um, "prompt_token_count", 0) or 0,
+                completion=getattr(um, "candidates_token_count", 0) or 0,
+                total=getattr(um, "total_token_count", 0) or 0,
+            )
+        return ChatResult(content=response.text, usage=usage)
     
     async def embed(self, text: str) -> list[float]:
         response = await self.client.aio.models.embed_content(
@@ -320,6 +385,47 @@ class AnthropicProvider(LLMProvider):
         self.model = Config.ANTHROPIC_MODEL
         self.default_temperature = Config.LLM_TEMPERATURE
         self.default_max_tokens = Config.LLM_MAX_TOKENS
+        self._embedding_provider: Optional[LLMProvider] = None
+    
+    def _get_embedding_provider(self) -> LLMProvider:
+        """Get or create a fallback provider for embeddings.
+
+        Anthropic does not offer an embedding API, so we delegate to
+        another provider.  The provider is chosen from:
+        1. ``EMBEDDING_PROVIDER`` env var (e.g. "openai", "gemini", "ollama")
+        2. Auto-detect: first available provider that supports embeddings.
+        """
+        if self._embedding_provider is not None:
+            return self._embedding_provider
+
+        fallback = Config.EMBEDDING_PROVIDER.lower().strip()
+        if not fallback:
+            # Auto-detect: prefer openai > gemini > ollama
+            for candidate in ("openai", "gemini", "ollama"):
+                try:
+                    provider = _providers[candidate]()
+                    self._embedding_provider = provider
+                    logger.info(
+                        "Anthropic: using '%s' as embedding fallback (auto-detected)",
+                        candidate,
+                    )
+                    return provider
+                except Exception:
+                    continue
+            raise RuntimeError(
+                "Anthropic does not provide an embedding API and no fallback "
+                "provider could be initialised.  Set EMBEDDING_PROVIDER to "
+                "'openai', 'gemini', or 'ollama' and supply the required keys."
+            )
+
+        if fallback not in _providers:
+            raise ValueError(
+                f"EMBEDDING_PROVIDER='{fallback}' is not a known provider. "
+                f"Supported: {', '.join(_providers.keys())}"
+            )
+        self._embedding_provider = _providers[fallback]()
+        logger.info("Anthropic: using '%s' as embedding provider", fallback)
+        return self._embedding_provider
     
     async def chat(
         self,
@@ -327,6 +433,15 @@ class AnthropicProvider(LLMProvider):
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
+        result = await self.chat_with_usage(messages, temperature, max_tokens)
+        return result.content
+
+    async def chat_with_usage(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> ChatResult:
         # Extract system message
         system_msg = None
         chat_messages = []
@@ -349,20 +464,24 @@ class AnthropicProvider(LLMProvider):
             kwargs["system"] = system_msg
         
         response = await self.client.messages.create(**kwargs)
-        return response.content[0].text
+        content = response.content[0].text
+        usage = TokenUsage()
+        if hasattr(response, "usage") and response.usage:
+            usage = TokenUsage(
+                prompt=getattr(response.usage, "input_tokens", 0) or 0,
+                completion=getattr(response.usage, "output_tokens", 0) or 0,
+                total=(
+                    (getattr(response.usage, "input_tokens", 0) or 0)
+                    + (getattr(response.usage, "output_tokens", 0) or 0)
+                ),
+            )
+        return ChatResult(content=content, usage=usage)
     
     async def embed(self, text: str) -> list[float]:
-        # Anthropic doesn't have embedding API, use OpenAI or Gemini for embeddings
-        raise NotImplementedError(
-            "Anthropic does not provide an embedding API. "
-            "Use OpenAI or Gemini for embeddings when using Anthropic for chat."
-        )
+        return await self._get_embedding_provider().embed(text)
     
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        raise NotImplementedError(
-            "Anthropic does not provide an embedding API. "
-            "Use OpenAI or Gemini for embeddings when using Anthropic for chat."
-        )
+        return await self._get_embedding_provider().embed_batch(texts)
 
 
 # Provider registry

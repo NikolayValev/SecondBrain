@@ -4,7 +4,7 @@ System service: health checks, stats, and provider configuration.
 
 import logging
 
-from app.config import config, Config
+from app.config import Config
 from app.db import db
 from app.embeddings import embedding_service
 from app.watcher import watcher
@@ -56,7 +56,7 @@ class SystemService:
         return HealthResponse(
             status="ok",
             version="1.0.0",
-            vault_path=str(config.VAULT_PATH),
+            vault_path=str(Config.VAULT_PATH),
             watcher_running=watcher.is_running,
             providers=providers,
             vector_store=vector_store,

@@ -8,7 +8,7 @@ import logging
 import struct
 from typing import Optional
 
-from app.config import Config, config
+from app.config import Config
 from app.db import db
 from app.chunker import chunker, Chunk
 from app import llm
@@ -41,13 +41,20 @@ class EmbeddingService:
     
     def get_model_name(self) -> str:
         """Get the embedding model name for the current provider."""
-        provider_name = Config.LLM_PROVIDER.lower()
+        # Use EMBEDDING_PROVIDER if set, otherwise fall back to LLM_PROVIDER
+        provider_name = (Config.EMBEDDING_PROVIDER or Config.LLM_PROVIDER).lower()
         if provider_name == "openai":
             return Config.OPENAI_EMBEDDING_MODEL
         elif provider_name == "gemini":
             return Config.GEMINI_EMBEDDING_MODEL
         elif provider_name == "ollama":
             return Config.OLLAMA_EMBEDDING_MODEL
+        elif provider_name == "anthropic":
+            # Anthropic has no embedding API; check EMBEDDING_PROVIDER fallback
+            fallback = Config.EMBEDDING_PROVIDER.lower()
+            if fallback and fallback != "anthropic":
+                return self.get_model_name()
+            return "unknown (configure EMBEDDING_PROVIDER)"
         return "unknown"
     
     @staticmethod
@@ -211,7 +218,7 @@ class EmbeddingService:
         dimensions: int,
     ) -> None:
         """Mirror a newly-created embedding to pgvector (best-effort)."""
-        if not config.POSTGRES_URL:
+        if not Config.POSTGRES_URL:
             return
         try:
             from app.db_postgres import get_postgres_db

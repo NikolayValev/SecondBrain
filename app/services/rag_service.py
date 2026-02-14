@@ -32,6 +32,7 @@ Use the provided context from the knowledge base to answer the question. If the 
 Guidelines:
 - Be concise but thorough
 - Reference specific notes when relevant
+- Use file paths to understand context (e.g. folder structure reveals projects, categories, and relationships)
 - If information is incomplete, acknowledge it
 - Don't make up information not in the context"""
 
@@ -88,7 +89,7 @@ class RAGAPIService:
 
         messages.append({"role": "user", "content": user_message})
 
-        answer = await provider.chat(messages=messages)
+        chat_result = await provider.chat_with_usage(messages=messages)
 
         sources = self._build_sources(rag_context, include=request.include_sources)
         conversation_id = request.conversation_id or str(uuid.uuid4())
@@ -97,16 +98,20 @@ class RAGAPIService:
         self._save_exchange(
             conversation_id=conversation_id,
             question=request.question,
-            answer=answer,
+            answer=chat_result.content,
             sources=sources,
         )
 
         return AskResponse(
-            answer=answer,
+            answer=chat_result.content,
             sources=sources,
             conversation_id=conversation_id,
             model_used=model_used,
-            tokens_used=TokenUsage(prompt=0, completion=0, total=0),
+            tokens_used=TokenUsage(
+                prompt=chat_result.usage.prompt,
+                completion=chat_result.usage.completion,
+                total=chat_result.usage.total,
+            ),
         )
 
     async def ask_stream(self, request: AskRequest) -> AsyncIterator[str]:
