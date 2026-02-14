@@ -27,7 +27,7 @@ class SemanticSearchRequest(BaseModel):
     """Request for semantic search."""
     query: str
     limit: int = 10
-    rag_technique: str = "basic"
+    rag_technique: str = "hybrid"
 
 
 class SemanticSearchResult(BaseModel):

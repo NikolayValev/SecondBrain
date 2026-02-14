@@ -6,15 +6,18 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from app.config import Config
+
 
 class AskRequest(BaseModel):
     """Request body for /ask endpoint."""
     question: str
     conversation_id: Optional[str] = None
-    provider: str = "gemini"
+    provider: str = Config.LLM_PROVIDER
     model: Optional[str] = None
-    rag_technique: str = "basic"
+    rag_technique: str = "hybrid"
     include_sources: bool = True
+    stream: bool = False
 
 
 class Source(BaseModel):

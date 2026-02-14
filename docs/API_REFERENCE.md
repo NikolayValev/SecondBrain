@@ -162,9 +162,9 @@ GET /config
     { "id": "multi-query", "name": "Multi-Query", "description": "Generates multiple query variations for better coverage" }
   ],
   "defaults": {
-    "provider": "gemini",
-    "model": "gemini-2.5-flash",
-    "rag_technique": "basic"
+    "provider": "ollama",
+    "model": "qwen3:30b",
+    "rag_technique": "hybrid"
   },
   "embedding_model": "text-embedding-004",
   "vector_store": "sqlite"
@@ -223,9 +223,9 @@ Content-Type: application/json
 |-------|------|---------|-------------|
 | `question` | string | (required) | The question to answer |
 | `conversation_id` | string | null | Optional conversation ID for context |
-| `provider` | string | `"gemini"` | LLM provider (ollama, openai, gemini, anthropic) |
+| `provider` | string | `"ollama"` | LLM provider (ollama, openai, gemini, anthropic) |
 | `model` | string | null | Specific model ID to use |
-| `rag_technique` | string | `"basic"` | RAG technique (basic, hybrid, rerank, hyde, multi-query) |
+| `rag_technique` | string | `"hybrid"` | RAG technique (basic, hybrid, rerank, hyde, multi-query) |
 | `include_sources` | boolean | `true` | Include source references |
 
 **Response:**

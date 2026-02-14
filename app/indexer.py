@@ -3,6 +3,7 @@ Indexer module for Second Brain daemon.
 Handles file indexing, updates, and deletion.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,7 @@ from datetime import datetime
 from app.config import config
 from app.db import Database, db
 from app.parser import MarkdownParser, parser
+from app.embeddings import embedding_service
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +94,16 @@ class Indexer:
                 links=list(parsed.links)
             )
             
+            # Create chunks for embedding
+            db_sections = self.db.get_sections_by_file(file_id)
+            if db_sections:
+                chunk_ids = embedding_service.create_chunks_for_file(file_id, db_sections)
+                logger.debug(f"Created {len(chunk_ids)} chunks for {rel_path}")
+
+                # Auto-generate embeddings in background when event loop is running
+                if chunk_ids:
+                    self._schedule_embed(file_id)
+
             logger.debug(
                 f"Indexed {rel_path}: {len(parsed.sections)} sections, "
                 f"{len(parsed.tags)} tags, {len(parsed.links)} links"
@@ -101,6 +113,37 @@ class Indexer:
         except Exception as e:
             logger.error(f"Error indexing {rel_path}: {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # Auto-embed helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _schedule_embed(file_id: int) -> None:
+        """
+        Schedule embedding generation for a file's chunks.
+
+        Tries to fire-and-forget on the running event loop.  During
+        startup / tests where no loop is running, the task is silently
+        skipped — the user can still call POST /embeddings/generate.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop — skip (batch mode / tests)
+            return
+
+        async def _embed() -> None:
+            try:
+                ok, fail = await embedding_service.embed_file_chunks(file_id)
+                if ok:
+                    logger.debug("Auto-embedded %d chunks for file %d", ok, file_id)
+                if fail:
+                    logger.warning("Auto-embed: %d failures for file %d", fail, file_id)
+            except Exception as exc:
+                logger.warning("Auto-embed error for file %d: %s", file_id, exc)
+
+        loop.create_task(_embed())
     
     def delete_file(self, file_path: Path) -> bool:
         """Remove a file from the index."""

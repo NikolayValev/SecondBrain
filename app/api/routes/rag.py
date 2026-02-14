@@ -5,7 +5,7 @@ RAG routes: /ask, /embeddings/*
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.api.models.rag import AskRequest, AskResponse, EmbeddingStatsResponse
 from app.services.rag_service import rag_api_service
@@ -24,9 +24,21 @@ async def ask_question(request: AskRequest):
     to generate an answer based on the retrieved context.
 
     Supports multiple providers, models, and RAG techniques.
+
+    Set ``stream: true`` to receive the answer as Server-Sent Events.
     """
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
+
+    if request.stream:
+        return StreamingResponse(
+            rag_api_service.ask_stream(request),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     try:
         return await rag_api_service.ask(request)

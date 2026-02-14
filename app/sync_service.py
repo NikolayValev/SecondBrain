@@ -4,6 +4,7 @@ Synchronizes data from local SQLite to remote PostgreSQL for Next.js consumption
 """
 
 import asyncio
+import json
 import logging
 import struct
 import time
@@ -48,6 +49,8 @@ class SyncService:
             'links': 0,
             'chunks': 0,
             'embeddings': 0,
+            'conversations': 0,
+            'messages': 0,
             'errors': []
         }
         
@@ -77,6 +80,13 @@ class SyncService:
                         'error': str(e)
                     })
                     logger.error(f"Error syncing {file_row['path']}: {e}")
+            
+            # Sync conversations & messages
+            try:
+                await self._sync_conversations(stats)
+            except Exception as e:
+                stats['errors'].append({'entity': 'conversations', 'error': str(e)})
+                logger.error(f"Error syncing conversations: {e}")
             
             duration_ms = int((time.time() - start_time) * 1000)
             
@@ -127,6 +137,8 @@ class SyncService:
             'links': 0,
             'chunks': 0,
             'embeddings': 0,
+            'conversations': 0,
+            'messages': 0,
             'errors': []
         }
         
@@ -173,6 +185,13 @@ class SyncService:
                         'error': str(e)
                     })
                     logger.error(f"Error syncing {file_row['path']}: {e}")
+            
+            # Sync conversations & messages
+            try:
+                await self._sync_conversations(stats)
+            except Exception as e:
+                stats['errors'].append({'entity': 'conversations', 'error': str(e)})
+                logger.error(f"Error syncing conversations: {e}")
             
             duration_ms = int((time.time() - start_time) * 1000)
             
@@ -315,21 +334,89 @@ class SyncService:
             )
             stats['chunks'] += 1
             
-            # Get and sync embedding
+            # Get and sync embedding (bytes + pgvector)
             embedding_row = db.get_chunk_embedding(chunk['id'])
             if embedding_row:
                 # Deserialize embedding from SQLite
                 embedding_bytes = embedding_row['embedding']
                 dimensions = embedding_row['dimensions']
                 embedding = list(struct.unpack(f'{dimensions}f', embedding_bytes))
+                model_name = embedding_row['model']
                 
                 await self.postgres_db.add_embedding(
                     chunk_id=pg_chunk_id,
                     embedding=embedding,
-                    model=embedding_row['model'],
+                    model=model_name,
                     dimensions=dimensions
                 )
+                # Also push to pgvector table
+                try:
+                    await self.postgres_db.add_embedding_vector(
+                        chunk_id=pg_chunk_id,
+                        embedding=embedding,
+                        model=model_name,
+                        dimensions=dimensions,
+                    )
+                except Exception as vec_err:
+                    logger.debug("embedding_vectors insert skipped: %s", vec_err)
                 stats['embeddings'] += 1
+
+    async def _sync_conversations(self, stats: dict) -> None:
+        """
+        Sync all conversations and messages from SQLite to PostgreSQL.
+
+        Uses an upsert-style approach: existing PG conversations (matched by
+        SQLite id stored in a mapping table) are skipped, new ones are created.
+        """
+        sqlite_convos = db.get_recent_conversations(limit=10000)
+        if not sqlite_convos:
+            return
+
+        # Build a set of existing PG conversation sqlite_ids to avoid duplicates
+        pg_convos = await self.postgres_db.get_recent_conversations(limit=10000)
+        # We'll match by title+created_at as a dedup key since IDs differ
+        pg_keys: set[str] = set()
+        for c in pg_convos:
+            created = c.get('created_at') or c.get('createdAt') or ''
+            if hasattr(created, 'isoformat'):
+                created = created.isoformat()
+            pg_keys.add(f"{c.get('session_id', '')}|{created}")
+
+        for conv in sqlite_convos:
+            created = conv.get('created_at', '')
+            dedup_key = f"{conv.get('session_id', '')}|{created}"
+            if dedup_key in pg_keys:
+                continue  # Already synced
+
+            # Create conversation in PG
+            pg_conv_id = await self.postgres_db.create_conversation(
+                session_id=conv.get('session_id'),
+                title=conv.get('title'),
+            )
+            stats['conversations'] += 1
+
+            # Sync messages for this conversation
+            messages = db.get_conversation_messages(conv['id'], limit=10000)
+            for msg in messages:
+                sources = msg.get('sources')
+                if isinstance(sources, str):
+                    try:
+                        sources = json.loads(sources)
+                    except Exception:
+                        sources = None
+                await self.postgres_db.add_message(
+                    conversation_id=pg_conv_id,
+                    role=msg['role'],
+                    content=msg['content'],
+                    sources=sources,
+                )
+                stats['messages'] += 1
+
+        logger.info(
+            "Conversations synced: %d conversations, %d messages",
+            stats['conversations'],
+            stats['messages'],
+        )
 
 
 # Singleton instance

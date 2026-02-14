@@ -54,7 +54,7 @@ class SearchService:
         self,
         query: str,
         limit: int = 10,
-        rag_technique: str = "basic",
+        rag_technique: str = "hybrid",
     ) -> SemanticSearchResponse:
         """
         Semantic search using vector embeddings.

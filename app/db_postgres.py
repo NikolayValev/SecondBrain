@@ -304,7 +304,7 @@ class PostgresDatabase:
         model: str,
         dimensions: int
     ) -> int:
-        """Add an embedding for a chunk."""
+        """Add an embedding for a chunk (bytes serialized)."""
         # Serialize embedding to bytes
         embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
         
@@ -321,6 +321,38 @@ class PostgresDatabase:
             """, chunk_id, embedding_bytes, model, dimensions)
             return row['id']
     
+    async def add_embedding_vector(
+        self,
+        chunk_id: int,
+        embedding: list[float],
+        model: str,
+        dimensions: int,
+    ) -> int:
+        """
+        Add an embedding using pgvector's ``vector`` type.
+
+        Falls back to :meth:`add_embedding` (bytes) when the
+        ``embedding_vectors`` table does not exist.
+        """
+        vec_literal = "[" + ",".join(str(v) for v in embedding) + "]"
+
+        async with self.acquire() as conn:
+            try:
+                row = await conn.fetchrow("""
+                    INSERT INTO embedding_vectors (chunk_id, embedding, model, dimensions, created_at)
+                    VALUES ($1, $2::vector, $3, $4, NOW())
+                    ON CONFLICT (chunk_id) DO UPDATE SET
+                        embedding = EXCLUDED.embedding,
+                        model = EXCLUDED.model,
+                        dimensions = EXCLUDED.dimensions,
+                        created_at = NOW()
+                    RETURNING id
+                """, chunk_id, vec_literal, model, dimensions)
+                return row["id"]
+            except asyncpg.exceptions.UndefinedTableError:
+                # Table not created yet — fall back to bytes
+                return await self.add_embedding(chunk_id, embedding, model, dimensions)
+    
     async def get_embedding(self, chunk_id: int) -> Optional[list[float]]:
         """Get embedding vector for a chunk."""
         async with self.acquire() as conn:
@@ -335,6 +367,76 @@ class PostgresDatabase:
             embedding_bytes = row['embedding']
             dimensions = row['dimensions']
             return list(struct.unpack(f'{dimensions}f', embedding_bytes))
+    
+    # ----- pgvector helpers --------------------------------------------------
+
+    async def ensure_pgvector(self, dimensions: int = 768) -> bool:
+        """
+        Create the pgvector extension and ``embedding_vectors`` table.
+
+        Safe to call repeatedly — uses IF NOT EXISTS guards.
+        Returns True when pgvector is usable, False otherwise.
+        """
+        async with self.acquire() as conn:
+            try:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                await conn.execute(f"""
+                    CREATE TABLE IF NOT EXISTS embedding_vectors (
+                        id SERIAL PRIMARY KEY,
+                        chunk_id INTEGER UNIQUE NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+                        embedding vector({dimensions}) NOT NULL,
+                        model TEXT NOT NULL,
+                        dimensions INTEGER NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                """)
+                await conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_ev_embedding
+                    ON embedding_vectors
+                    USING hnsw (embedding vector_cosine_ops)
+                """)
+                logger.info("pgvector extension + embedding_vectors table ready (dim=%d)", dimensions)
+                return True
+            except Exception as exc:
+                logger.warning("pgvector setup failed (non-fatal): %s", exc)
+                return False
+
+    async def vector_search(
+        self,
+        query_embedding: list[float],
+        top_k: int = 5,
+        threshold: float = 0.3,
+    ) -> list[dict]:
+        """
+        Semantic search using pgvector cosine similarity.
+
+        Returns a list of dicts with keys:
+        ``chunk_id, file_path, file_title, section_heading, chunk_content,
+        similarity``.
+        """
+        vec_literal = "[" + ",".join(str(v) for v in query_embedding) + "]"
+
+        async with self.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT
+                    ev.chunk_id,
+                    c.content   AS chunk_content,
+                    c.chunk_index,
+                    f.id        AS file_id,
+                    f.path      AS file_path,
+                    f.title     AS file_title,
+                    s.heading   AS section_heading,
+                    1 - (ev.embedding <=> $1::vector) AS similarity
+                FROM embedding_vectors ev
+                JOIN chunks   c ON c.id = ev.chunk_id
+                JOIN files    f ON f.id = c.file_id
+                LEFT JOIN sections s ON s.id = c.section_id
+                WHERE 1 - (ev.embedding <=> $1::vector) >= $3
+                ORDER BY ev.embedding <=> $1::vector
+                LIMIT $2
+            """, vec_literal, top_k, threshold)
+
+            return [dict(row) for row in rows]
     
     # =========================================================================
     # Search Operations
@@ -440,6 +542,19 @@ class PostgresDatabase:
             )
             stats['embedding_count'] = await conn.fetchval(
                 "SELECT COUNT(*) FROM embeddings"
+            )
+            # pgvector table (may not exist)
+            try:
+                stats['embedding_vector_count'] = await conn.fetchval(
+                    "SELECT COUNT(*) FROM embedding_vectors"
+                )
+            except Exception:
+                stats['embedding_vector_count'] = 0
+            stats['conversation_count'] = await conn.fetchval(
+                "SELECT COUNT(*) FROM conversations"
+            )
+            stats['message_count'] = await conn.fetchval(
+                "SELECT COUNT(*) FROM messages"
             )
             
             last_sync = await self.get_last_sync()

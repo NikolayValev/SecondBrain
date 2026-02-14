@@ -4,6 +4,7 @@ Implements various retrieval-augmented generation strategies.
 """
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
@@ -166,7 +167,8 @@ class HybridRAG(RAGTechnique):
         )
         
         # Sparse retrieval: FTS5 keyword search
-        fts_results = db.search(query, limit=top_k * 3)
+        fts_query = self._sanitize_fts_query(query)
+        fts_results = db.search(fts_query, limit=top_k * 3) if fts_query else []
         
         # Combine using RRF
         combined = self._reciprocal_rank_fusion(
@@ -187,6 +189,13 @@ class HybridRAG(RAGTechnique):
             }
         )
     
+    @staticmethod
+    def _sanitize_fts_query(query: str) -> str:
+        """Strip FTS5 special characters so raw user input is safe."""
+        sanitized = re.sub(r'[*?"():^{}~\-]', ' ', query)
+        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+        return sanitized
+
     def _reciprocal_rank_fusion(
         self,
         semantic: list[SearchResult],
@@ -398,17 +407,36 @@ class HyDERAG(RAGTechnique):
         # Generate hypothetical answer
         hypothetical = await self._generate_hypothetical(query)
         
-        # Embed the hypothetical answer
+        # Embed both the hypothetical answer and original query
         hyde_embedding = await embedding_service.embed_text(hypothetical)
+        query_embedding = await embedding_service.embed_text(query)
         
-        # Search using hypothetical embedding
-        results = vector_search.search(
+        # Search using hypothetical embedding (lower threshold — HyDE
+        # embeddings are naturally less similar to stored chunks)
+        hyde_threshold = max(threshold - 0.15, 0.05)
+        hyde_results = vector_search.search(
             query_embedding=hyde_embedding,
             top_k=top_k * 2,
+            threshold=hyde_threshold,
+        )
+        
+        # Also search with original query for fallback
+        query_results = vector_search.search(
+            query_embedding=query_embedding,
+            top_k=top_k,
             threshold=threshold,
         )
         
-        results = vector_search.deduplicate_by_file(results, max_per_file=2)[:top_k]
+        # Merge results, preferring HyDE but filling with query results
+        seen_chunks: set[int] = set()
+        merged: list[SearchResult] = []
+        for r in hyde_results + query_results:
+            if r.chunk_id not in seen_chunks:
+                seen_chunks.add(r.chunk_id)
+                merged.append(r)
+        
+        merged.sort(key=lambda x: x.similarity, reverse=True)
+        results = vector_search.deduplicate_by_file(merged, max_per_file=2)[:top_k]
         
         return RAGContext(
             chunks=results,

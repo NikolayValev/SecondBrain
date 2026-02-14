@@ -22,6 +22,8 @@ class SyncResponse(BaseModel):
     links: int
     chunks: int
     embeddings: int
+    conversations: int = 0
+    messages: int = 0
     errors: list[dict]
     status: str
 
@@ -34,4 +36,7 @@ class PostgresStatsResponse(BaseModel):
     link_count: int
     chunk_count: int
     embedding_count: int
+    embedding_vector_count: int = 0
+    conversation_count: int = 0
+    message_count: int = 0
     last_sync: Optional[str]

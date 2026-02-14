@@ -5,7 +5,7 @@ Provides a unified interface for OpenAI, Gemini, and Ollama providers.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 import httpx
 
@@ -36,6 +36,21 @@ class LLMProvider(ABC):
             The assistant's response text.
         """
         pass
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        """
+        Stream a chat completion token-by-token.
+
+        Default implementation falls back to non-streaming :meth:`chat`
+        and yields the full response as one chunk.
+        """
+        full = await self.chat(messages, temperature, max_tokens)
+        yield full
     
     @abstractmethod
     async def embed(self, text: str) -> list[float]:
@@ -92,6 +107,24 @@ class OpenAIProvider(LLMProvider):
             max_tokens=max_tokens or self.default_max_tokens,
         )
         return response.choices[0].message.content or ""
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature or self.default_temperature,
+            max_tokens=max_tokens or self.default_max_tokens,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta if chunk.choices else None
+            if delta and delta.content:
+                yield delta.content
     
     async def embed(self, text: str) -> list[float]:
         response = await self.client.embeddings.create(
@@ -148,7 +181,7 @@ class GeminiProvider(LLMProvider):
         for msg in gemini_messages:
             contents.append(self.types.Content(
                 role=msg["role"],
-                parts=[self.types.Part.from_text(msg["parts"][0])]
+                parts=[self.types.Part(text=msg["parts"][0])]
             ))
         
         # Include system prompt in the last user message if present
@@ -157,7 +190,7 @@ class GeminiProvider(LLMProvider):
             original_text = last_content.parts[0].text
             contents[-1] = self.types.Content(
                 role=last_content.role,
-                parts=[self.types.Part.from_text(f"{system_msg}\n\n{original_text}")]
+                parts=[self.types.Part(text=f"{system_msg}\n\n{original_text}")]
             )
         
         config = self.types.GenerateContentConfig(
@@ -219,6 +252,39 @@ class OllamaProvider(LLMProvider):
         response.raise_for_status()
         data = response.json()
         return data.get("message", {}).get("content", "")
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> AsyncIterator[str]:
+        import json as _json
+
+        async with self.client.stream(
+            "POST",
+            f"{self.base_url}/api/chat",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "options": {
+                    "temperature": temperature or self.default_temperature,
+                    "num_predict": max_tokens or self.default_max_tokens,
+                },
+            },
+        ) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    data = _json.loads(line)
+                    content = data.get("message", {}).get("content", "")
+                    if content:
+                        yield content
+                except _json.JSONDecodeError:
+                    continue
     
     async def embed(self, text: str) -> list[float]:
         response = await self.client.post(

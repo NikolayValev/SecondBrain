@@ -157,6 +157,30 @@ class Database:
                 )
             """)
             
+            # Conversations table - RAG chat history
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT,
+                    title TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+
+            # Messages table - individual messages in a conversation
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS messages (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id INTEGER NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    sources TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                )
+            """)
+
             # Metadata table for tracking
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
@@ -174,6 +198,10 @@ class Database:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_file_id ON chunks(file_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_chunks_section_id ON chunks(section_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_chunk_id ON embeddings(chunk_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_session_id ON conversations(session_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)")
             
             # FTS5 virtual table for full-text search
             # Standalone FTS table (not content-synced) for flexibility
@@ -616,6 +644,134 @@ class Database:
             )
             row = cur.fetchone()
             return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Conversation / message methods
+    # ------------------------------------------------------------------
+
+    def create_conversation(
+        self,
+        session_id: Optional[str] = None,
+        title: Optional[str] = None,
+    ) -> int:
+        """Create a new conversation. Returns conversation ID."""
+        now = datetime.utcnow().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """INSERT INTO conversations (session_id, title, created_at, updated_at)
+                   VALUES (?, ?, ?, ?)""",
+                (session_id, title, now, now),
+            )
+            return cur.lastrowid
+
+    def add_message(
+        self,
+        conversation_id: int,
+        role: str,
+        content: str,
+        sources: Optional[list[dict]] = None,
+    ) -> int:
+        """Add a message to a conversation. Returns message ID."""
+        import json as _json
+
+        sources_json = _json.dumps(sources) if sources else None
+        now = datetime.utcnow().isoformat()
+        with self.cursor() as cur:
+            cur.execute(
+                """INSERT INTO messages (conversation_id, role, content, sources, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (conversation_id, role, content, sources_json, now),
+            )
+            msg_id = cur.lastrowid
+            # Bump the conversation's updated_at
+            cur.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+            return msg_id
+
+    def get_conversation(self, conversation_id: int) -> Optional[dict]:
+        """Get a conversation with all its messages."""
+        import json as _json
+
+        with self.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM conversations WHERE id = ?",
+                (conversation_id,),
+            )
+            conv = cur.fetchone()
+            if not conv:
+                return None
+            result = dict(conv)
+
+            cur.execute(
+                """SELECT * FROM messages
+                   WHERE conversation_id = ?
+                   ORDER BY created_at""",
+                (conversation_id,),
+            )
+            messages = []
+            for row in cur.fetchall():
+                m = dict(row)
+                if m.get("sources"):
+                    try:
+                        m["sources"] = _json.loads(m["sources"])
+                    except Exception:
+                        pass
+                messages.append(m)
+            result["messages"] = messages
+            return result
+
+    def get_recent_conversations(
+        self,
+        session_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Get recent conversations (optionally filtered by session_id)."""
+        with self.cursor() as cur:
+            if session_id:
+                cur.execute(
+                    """SELECT * FROM conversations
+                       WHERE session_id = ?
+                       ORDER BY updated_at DESC
+                       LIMIT ?""",
+                    (session_id, limit),
+                )
+            else:
+                cur.execute(
+                    """SELECT * FROM conversations
+                       ORDER BY updated_at DESC
+                       LIMIT ?""",
+                    (limit,),
+                )
+            return [dict(row) for row in cur.fetchall()]
+
+    def get_conversation_messages(
+        self,
+        conversation_id: int,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Get messages for a conversation (most recent *limit*)."""
+        import json as _json
+
+        with self.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM messages
+                   WHERE conversation_id = ?
+                   ORDER BY created_at
+                   LIMIT ?""",
+                (conversation_id, limit),
+            )
+            messages = []
+            for row in cur.fetchall():
+                m = dict(row)
+                if m.get("sources"):
+                    try:
+                        m["sources"] = _json.loads(m["sources"])
+                    except Exception:
+                        pass
+                messages.append(m)
+            return messages
 
 
 # Singleton database instance

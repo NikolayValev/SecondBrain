@@ -1,8 +1,10 @@
 """
-Sync routes: /sync, /sync/stats, /sync/file
+Sync routes: /sync, /sync/stats, /sync/file, /sync/conversations, /sync/changes
 """
 
 import logging
+from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -71,3 +73,47 @@ async def sync_single_file(path: str = Query(..., description="File path to sync
     except Exception as e:
         logger.error("File sync error: %s", e)
         raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+
+
+@router.post("/sync/conversations")
+async def sync_conversations():
+    """
+    Sync conversations and messages from SQLite to PostgreSQL.
+
+    Useful for the Next.js frontend to access conversation history
+    that was created through the Python /ask endpoint.
+    """
+    try:
+        stats = await sync_api_service.sync_conversations()
+        return stats
+    except EnvironmentError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("Conversation sync error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+
+
+@router.get("/sync/changes")
+async def get_changes_since(
+    since: Optional[str] = Query(
+        None,
+        description="ISO-8601 timestamp. Returns changes after this time. "
+                    "Omit for all data.",
+    ),
+):
+    """
+    Get a summary of what changed since a given timestamp.
+
+    The Next.js frontend can poll this endpoint and decide whether
+    to call ``POST /sync`` when changes are detected.
+
+    Returns counts of files, chunks, embeddings, and conversations
+    that have been modified since ``since``.
+    """
+    try:
+        return await sync_api_service.get_changes_since(since)
+    except EnvironmentError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("Changes-since error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed: {e}")

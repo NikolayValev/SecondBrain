@@ -167,7 +167,7 @@ class SystemService:
             defaults=ConfigDefaults(
                 provider=default_provider,
                 model=default_model,
-                rag_technique="basic",
+                rag_technique="hybrid",
             ),
             embedding_model=embedding_model,
             vector_store="sqlite",

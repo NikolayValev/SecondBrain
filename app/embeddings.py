@@ -8,7 +8,7 @@ import logging
 import struct
 from typing import Optional
 
-from app.config import Config
+from app.config import Config, config
 from app.db import db
 from app.chunker import chunker, Chunk
 from app import llm
@@ -135,6 +135,9 @@ class EmbeddingService:
                             model=model,
                             dimensions=len(embedding)
                         )
+                        await self._sync_embedding_to_pg(
+                            chunk_data, embedding, model, len(embedding)
+                        )
                         success += 1
                     except Exception as e:
                         logger.error(f"Failed to store embedding: {e}")
@@ -185,6 +188,9 @@ class EmbeddingService:
                             model=model,
                             dimensions=len(embedding)
                         )
+                        await self._sync_embedding_to_pg(
+                            chunk_data, embedding, model, len(embedding)
+                        )
                         success += 1
                     except Exception as e:
                         logger.error(f"Failed to store embedding: {e}")
@@ -197,6 +203,56 @@ class EmbeddingService:
         logger.info(f"Embedded {success} chunks, {failed} failed")
         return success, failed
     
+    async def _sync_embedding_to_pg(
+        self,
+        chunk_data: dict,
+        embedding: list[float],
+        model: str,
+        dimensions: int,
+    ) -> None:
+        """Mirror a newly-created embedding to pgvector (best-effort)."""
+        if not config.POSTGRES_URL:
+            return
+        try:
+            from app.db_postgres import get_postgres_db
+
+            pg = get_postgres_db()
+
+            # Resolve PG chunk_id by (file_path, chunk_index)
+            file_path = chunk_data.get("file_path") or chunk_data.get("path")
+            chunk_index = chunk_data.get("chunk_index")
+            if file_path is None or chunk_index is None:
+                return
+
+            async with pg.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT c.id FROM chunks c
+                    JOIN files f ON f.id = c.file_id
+                    WHERE f.path = $1 AND c.chunk_index = $2
+                    """,
+                    file_path,
+                    chunk_index,
+                )
+            if not row:
+                return
+
+            await pg.add_embedding_vector(
+                chunk_id=row["id"],
+                embedding=embedding,
+                model=model,
+                dimensions=dimensions,
+            )
+            # Also write to the legacy bytes-based embeddings table
+            await pg.add_embedding(
+                chunk_id=row["id"],
+                embedding=embedding,
+                model=model,
+                dimensions=dimensions,
+            )
+        except Exception as exc:
+            logger.debug("pgvector sync failed (non-fatal): %s", exc)
+
     def create_chunks_for_file(
         self, 
         file_id: int, 

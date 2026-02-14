@@ -1,36 +1,45 @@
 """
 Conversation service: CRUD for chat conversations and messages.
+
+Uses SQLite as primary storage. If PostgreSQL is configured the
+operations are also forwarded there for Next.js/Prisma consumption.
 """
 
 import logging
 from typing import Optional
 
 from app.config import config
-from app.db_postgres import get_postgres_db
+from app.db import db
 
 logger = logging.getLogger(__name__)
 
 
-class ConversationService:
-    """Manages conversations stored in PostgreSQL."""
+def _pg_available() -> bool:
+    """Return True when PostgreSQL is configured."""
+    return bool(config.POSTGRES_URL)
 
-    @staticmethod
-    def _require_postgres() -> None:
-        if not config.POSTGRES_URL:
-            raise EnvironmentError("PostgreSQL not configured. Set DATABASE_URL or POSTGRES_URL environment variable.")
+
+class ConversationService:
+    """Manages conversations stored in SQLite (primary) + optional PG sync."""
 
     async def create(self, session_id: Optional[str] = None, title: Optional[str] = None) -> dict:
         """Create a new conversation and return its id."""
-        self._require_postgres()
-        pg_db = get_postgres_db()
-        conv_id = await pg_db.create_conversation(session_id=session_id, title=title)
+        conv_id = db.create_conversation(session_id=session_id, title=title)
+
+        # Mirror to PG when available
+        if _pg_available():
+            try:
+                from app.db_postgres import get_postgres_db
+                pg_db = get_postgres_db()
+                await pg_db.create_conversation(session_id=session_id, title=title)
+            except Exception as exc:
+                logger.warning("PG mirror failed (create_conversation): %s", exc)
+
         return {"id": conv_id, "status": "created"}
 
     async def get(self, conversation_id: int) -> Optional[dict]:
         """Return a conversation with messages, or None."""
-        self._require_postgres()
-        pg_db = get_postgres_db()
-        return await pg_db.get_conversation(conversation_id)
+        return db.get_conversation(conversation_id)
 
     async def add_message(
         self,
@@ -40,14 +49,27 @@ class ConversationService:
         sources: Optional[list[dict]] = None,
     ) -> dict:
         """Append a message to a conversation."""
-        self._require_postgres()
-        pg_db = get_postgres_db()
-        message_id = await pg_db.add_message(
+        message_id = db.add_message(
             conversation_id=conversation_id,
             role=role,
             content=content,
             sources=sources,
         )
+
+        # Mirror to PG when available
+        if _pg_available():
+            try:
+                from app.db_postgres import get_postgres_db
+                pg_db = get_postgres_db()
+                await pg_db.add_message(
+                    conversation_id=conversation_id,
+                    role=role,
+                    content=content,
+                    sources=sources,
+                )
+            except Exception as exc:
+                logger.warning("PG mirror failed (add_message): %s", exc)
+
         return {"id": message_id, "status": "added"}
 
     async def list_recent(
@@ -56,9 +78,7 @@ class ConversationService:
         limit: int = 20,
     ) -> dict:
         """List recent conversations."""
-        self._require_postgres()
-        pg_db = get_postgres_db()
-        conversations = await pg_db.get_recent_conversations(session_id=session_id, limit=limit)
+        conversations = db.get_recent_conversations(session_id=session_id, limit=limit)
         return {"conversations": conversations, "count": len(conversations)}
 
 
