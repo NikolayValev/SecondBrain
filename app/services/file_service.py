@@ -44,6 +44,26 @@ def _resolve_created_at(frontmatter: dict, fallback: Optional[str]) -> Optional[
     return created_at
 
 
+def _normalize_relative_path(path: str) -> str:
+    """Normalize incoming vault-relative path and reject traversal."""
+    raw = (path or "").strip().replace("\\", "/")
+    if not raw:
+        raise ValueError("Path cannot be empty")
+    # Disallow absolute paths from callers.
+    if Path(raw).is_absolute():
+        raise PermissionError("Absolute paths are not allowed")
+
+    # Resolve against vault and ensure it stays inside vault root.
+    vault_root = config.VAULT_PATH.resolve()
+    candidate = (vault_root / raw).resolve(strict=False)
+    try:
+        candidate.relative_to(vault_root)
+    except ValueError as exc:
+        raise PermissionError("Path traversal is not allowed") from exc
+
+    return candidate.relative_to(vault_root).as_posix()
+
+
 class FileService:
     """Handles file retrieval, tags, and backlinks."""
 
@@ -63,12 +83,13 @@ class FileService:
             FileNotFoundError: If the file doesn't exist.
             IOError: If the file can't be read.
         """
-        file_record = db.get_file_by_path(path)
+        normalized_path = _normalize_relative_path(path)
+        file_record = db.get_file_by_path(normalized_path)
 
         if not file_record:
-            return self._read_from_filesystem(path)
+            return self._read_from_filesystem(normalized_path)
 
-        return self._build_from_db(file_record, path)
+        return self._build_from_db(file_record, normalized_path)
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -78,9 +99,10 @@ class FileService:
         """Read directly from the filesystem when not indexed."""
         from app.parser import MarkdownParser
 
-        file_path = config.VAULT_PATH / path
+        normalized_path = _normalize_relative_path(path)
+        file_path = config.VAULT_PATH / normalized_path
         if not file_path.exists() or not file_path.is_file():
-            raise FileNotFoundError(f"File not found: {path}")
+            raise FileNotFoundError(f"File not found: {normalized_path}")
 
         parser = MarkdownParser(config.VAULT_PATH)
         parsed = parser.parse_file(file_path)
@@ -94,7 +116,7 @@ class FileService:
         logger.info("File not in database, reading from filesystem: %s", path)
 
         return FileResponse(
-            path=path,
+            path=normalized_path,
             title=parsed.title,
             content=content,
             tags=parsed.tags,

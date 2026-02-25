@@ -35,7 +35,7 @@ async def search(
         return search_service.fulltext_search(q, limit=limit)
     except Exception as e:
         logger.error("Search error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+        raise HTTPException(status_code=500, detail="Search failed")
 
 
 @router.post("/search", response_model=SemanticSearchResponse)
@@ -59,4 +59,4 @@ async def semantic_search(request: SemanticSearchRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Semantic search error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+        raise HTTPException(status_code=500, detail="Search failed")

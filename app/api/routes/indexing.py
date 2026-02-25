@@ -24,7 +24,7 @@ async def trigger_reindex(full: bool = Query(False, description="Perform full re
         return indexing_service.reindex(full=full)
     except Exception as e:
         logger.error("Reindex error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Reindex failed: {e}")
+        raise HTTPException(status_code=500, detail="Reindex failed")
 
 
 @router.post("/index", response_model=IndexResponse)

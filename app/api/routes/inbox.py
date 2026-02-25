@@ -30,7 +30,7 @@ async def process_inbox(request: InboxProcessRequest):
         return await inbox_service.process(request)
     except Exception as e:
         logger.error("Inbox processing error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Inbox processing failed: {e}")
+        raise HTTPException(status_code=500, detail="Inbox processing failed")
 
 
 @router.get("/inbox/files")

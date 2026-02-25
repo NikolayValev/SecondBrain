@@ -13,6 +13,29 @@ _env_path = _project_root / ".env"
 load_dotenv(_env_path)
 
 
+def _get_bool(name: str, default: str = "false") -> bool:
+    """Parse environment variable into bool."""
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_int(name: str, default: str) -> int:
+    """Parse environment variable into int with fallback."""
+    raw = os.getenv(name, default).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+def _get_csv(name: str, default: list[str]) -> list[str]:
+    """Parse comma-separated env var into a non-empty list."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    values = [item.strip() for item in raw.split(",")]
+    return [item for item in values if item]
+
+
 class Config:
     """Application configuration."""
     
@@ -37,6 +60,28 @@ class Config:
     API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))
     BRAIN_API_KEY: str = os.getenv("BRAIN_API_KEY", "")  # Required for authenticated endpoints
+    REQUIRE_API_KEY: bool = _get_bool("REQUIRE_API_KEY", "false")
+    EXPOSE_API_DOCS: bool = _get_bool("EXPOSE_API_DOCS", "false")
+    EXPOSE_CONFIG_PUBLIC: bool = _get_bool("EXPOSE_CONFIG_PUBLIC", "false")
+    DEBUG: bool = _get_bool("DEBUG", "false")
+    PUBLIC_API_MODE: bool = _get_bool("PUBLIC_API_MODE", "false")
+    CORS_ALLOW_CREDENTIALS: bool = _get_bool("CORS_ALLOW_CREDENTIALS", "false")
+    ALLOWED_ORIGINS: list[str] = _get_csv(
+        "ALLOWED_ORIGINS",
+        ["http://localhost:3000", "http://127.0.0.1:3000"],
+    )
+    ALLOWED_HOSTS: list[str] = _get_csv(
+        "ALLOWED_HOSTS",
+        ["127.0.0.1", "localhost"],
+    )
+    RATE_LIMIT_ENABLED: bool = _get_bool("RATE_LIMIT_ENABLED", "true")
+    RATE_LIMIT_WINDOW_SECONDS: int = _get_int("RATE_LIMIT_WINDOW_SECONDS", "60")
+    RATE_LIMIT_DEFAULT_PER_WINDOW: int = _get_int("RATE_LIMIT_DEFAULT_PER_WINDOW", "120")
+    RATE_LIMIT_ASK_PER_WINDOW: int = _get_int("RATE_LIMIT_ASK_PER_WINDOW", "30")
+    RATE_LIMIT_EMBEDDINGS_PER_WINDOW: int = _get_int("RATE_LIMIT_EMBEDDINGS_PER_WINDOW", "6")
+    RATE_LIMIT_SYNC_PER_WINDOW: int = _get_int("RATE_LIMIT_SYNC_PER_WINDOW", "20")
+    RATE_LIMIT_INDEXING_PER_WINDOW: int = _get_int("RATE_LIMIT_INDEXING_PER_WINDOW", "20")
+    MAX_REQUEST_BYTES: int = _get_int("MAX_REQUEST_BYTES", "1048576")
     
     # Logging
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -90,6 +135,23 @@ class Config:
             )
         if not cls.VAULT_PATH.is_dir():
             raise ValueError(f"VAULT_PATH must be a directory: {cls.VAULT_PATH}")
+        if cls.REQUIRE_API_KEY and not cls.BRAIN_API_KEY:
+            raise ValueError("REQUIRE_API_KEY=true but BRAIN_API_KEY is not set")
+        if cls.REQUIRE_API_KEY and len(cls.BRAIN_API_KEY) < 24:
+            raise ValueError("BRAIN_API_KEY must be at least 24 characters when REQUIRE_API_KEY=true")
+        if cls.RATE_LIMIT_WINDOW_SECONDS <= 0:
+            raise ValueError("RATE_LIMIT_WINDOW_SECONDS must be > 0")
+        for name, value in (
+            ("RATE_LIMIT_DEFAULT_PER_WINDOW", cls.RATE_LIMIT_DEFAULT_PER_WINDOW),
+            ("RATE_LIMIT_ASK_PER_WINDOW", cls.RATE_LIMIT_ASK_PER_WINDOW),
+            ("RATE_LIMIT_EMBEDDINGS_PER_WINDOW", cls.RATE_LIMIT_EMBEDDINGS_PER_WINDOW),
+            ("RATE_LIMIT_SYNC_PER_WINDOW", cls.RATE_LIMIT_SYNC_PER_WINDOW),
+            ("RATE_LIMIT_INDEXING_PER_WINDOW", cls.RATE_LIMIT_INDEXING_PER_WINDOW),
+        ):
+            if value <= 0:
+                raise ValueError(f"{name} must be > 0")
+        if cls.MAX_REQUEST_BYTES <= 0:
+            raise ValueError("MAX_REQUEST_BYTES must be > 0")
     
     @classmethod
     def validate_llm_config(cls) -> None:

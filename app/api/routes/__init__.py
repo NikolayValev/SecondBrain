@@ -13,6 +13,7 @@ from app.api.routes.inbox import router as inbox_router
 from app.api.routes.sync import router as sync_router
 from app.api.routes.indexing import router as indexing_router
 from app.api.routes.conversations import router as conversations_router
+from app.api.routes.security import router as security_router
 
 all_routers = [
     system_router,
@@ -23,6 +24,7 @@ all_routers = [
     sync_router,
     indexing_router,
     conversations_router,
+    security_router,
 ]
 
 __all__ = ["all_routers"]

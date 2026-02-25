@@ -23,6 +23,7 @@ from app.indexer import indexer
 from app.watcher import watcher
 from app.api.middleware import register_middleware
 from app.api.routes import all_routers
+from app.services.security_service import security_service
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -48,6 +49,13 @@ async def lifespan(app: FastAPI):
 
     try:
         config.validate()
+        security_report = security_service.assert_startup_security()
+        if security_report.warning_checks:
+            logger.warning(
+                "Security self-check warnings: %d (mode=%s)",
+                security_report.warning_checks,
+                security_report.mode,
+            )
         logger.info("Vault path: %s", config.VAULT_PATH)
 
         db.initialize()
@@ -106,18 +114,20 @@ for router in all_routers:
 
 @app.exception_handler(ValueError)
 async def value_error_handler(request, exc):
+    detail = str(exc) if config.DEBUG else "Invalid request payload"
     return JSONResponse(
         status_code=400,
-        content={"error": "Invalid request", "detail": str(exc)},
+        content={"error": "Invalid request", "detail": detail},
     )
 
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
     logger.error("Unhandled exception: %s", exc)
+    detail = str(exc) if config.DEBUG else "An unexpected error occurred"
     return JSONResponse(
         status_code=500,
-        content={"error": "Internal server error", "detail": str(exc)},
+        content={"error": "Internal server error", "detail": detail},
     )
 
 

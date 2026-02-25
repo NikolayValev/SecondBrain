@@ -125,6 +125,36 @@ The server will:
 4. Start watching for file changes
 5. Serve the API at `http://127.0.0.1:8000`
 
+## Security For Public Deployment
+
+If you expose this API publicly (for example via Cloudflare Tunnel), set these in `.env`:
+
+```ini
+REQUIRE_API_KEY=true
+PUBLIC_API_MODE=true
+BRAIN_API_KEY=<use-a-long-random-secret>
+EXPOSE_API_DOCS=false
+EXPOSE_CONFIG_PUBLIC=false
+DEBUG=false
+ALLOWED_HOSTS=brain.nikolayvalev.com,127.0.0.1,localhost
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_WINDOW_SECONDS=60
+MAX_REQUEST_BYTES=1048576
+```
+
+Recommended:
+- Keep `BRAIN_API_KEY` at least 24 characters.
+- Restrict `ALLOWED_ORIGINS` to trusted frontend origins only.
+- Rotate API keys if leaked.
+- Keep origin private and expose only via Cloudflare/Tunnel access controls.
+- Apply upstream rate limiting/WAF rules for `/ask`, `/embeddings/generate`, and `/sync` endpoints.
+- Keep in-app rate limiting enabled and tune per-endpoint limits for your traffic profile.
+- Keep `MAX_REQUEST_BYTES` low (default `1048576`) unless larger payloads are explicitly needed.
+
+Security self-check:
+- Runtime report endpoint: `GET /security/self-check` (authenticated).
+- Startup fail-fast is enabled when `PUBLIC_API_MODE=true`.
+
 ## API Endpoints
 
 ### Health Check

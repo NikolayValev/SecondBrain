@@ -27,11 +27,13 @@ async def get_file(
     """
     try:
         return file_service.get_file(path)
+    except PermissionError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
     except Exception as e:
         logger.error("Error reading file: %s", e)
-        raise HTTPException(status_code=500, detail=f"Error reading file: {e}")
+        raise HTTPException(status_code=500, detail="Error reading file")
 
 
 @router.get("/tags", response_model=TagsResponse, tags=["Metadata"])

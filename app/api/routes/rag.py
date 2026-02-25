@@ -52,7 +52,7 @@ async def ask_question(request: AskRequest):
         logger.error("RAG error: %s", e)
         return JSONResponse(
             status_code=500,
-            content={"error": f"Failed to generate answer: {e}", "code": "GENERATION_ERROR"},
+            content={"error": "Failed to generate answer", "code": "GENERATION_ERROR"},
         )
 
 
@@ -79,7 +79,7 @@ async def generate_embeddings(
         return await rag_api_service.generate_embeddings(limit=limit)
     except ValueError as e:
         logger.error("Embedding configuration error: %s", e)
-        raise HTTPException(status_code=503, detail=f"LLM not configured: {e}")
+        raise HTTPException(status_code=503, detail="LLM not configured")
     except Exception as e:
         logger.error("Embedding generation error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Embedding generation failed")

@@ -94,7 +94,8 @@ def client(test_vault, test_db_path):
     with patch.dict(os.environ, {
         "VAULT_PATH": str(test_vault),
         "DATABASE_PATH": test_db_path,
-        "LOG_LEVEL": "WARNING"
+        "LOG_LEVEL": "WARNING",
+        "ALLOWED_HOSTS": "testserver,127.0.0.1,localhost",
     }):
         # Need to reload config to pick up new env vars
         import importlib

@@ -62,6 +62,10 @@ from app.api.models.indexing import (
     IndexResponse,
     IndexStatusResponse,
 )
+from app.api.models.security import (
+    SecurityCheckResult,
+    SecurityReportResponse,
+)
 
 __all__ = [
     # System
@@ -113,4 +117,7 @@ __all__ = [
     "IndexRequest",
     "IndexResponse",
     "IndexStatusResponse",
+    # Security
+    "SecurityCheckResult",
+    "SecurityReportResponse",
 ]

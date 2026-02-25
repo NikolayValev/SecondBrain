@@ -35,7 +35,7 @@ async def sync_to_postgres(request: SyncRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Sync error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+        raise HTTPException(status_code=500, detail="Sync failed")
 
 
 @router.get("/sync/stats", response_model=PostgresStatsResponse)
@@ -51,7 +51,7 @@ async def postgres_stats():
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("PostgreSQL stats error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed to get stats: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get stats")
 
 
 @router.post("/sync/file")
@@ -72,7 +72,7 @@ async def sync_single_file(path: str = Query(..., description="File path to sync
         raise
     except Exception as e:
         logger.error("File sync error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+        raise HTTPException(status_code=500, detail="Sync failed")
 
 
 @router.post("/sync/conversations")
@@ -90,7 +90,7 @@ async def sync_conversations():
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("Conversation sync error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Sync failed: {e}")
+        raise HTTPException(status_code=500, detail="Sync failed")
 
 
 @router.get("/sync/changes")
@@ -116,4 +116,4 @@ async def get_changes_since(
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("Changes-since error: %s", e)
-        raise HTTPException(status_code=500, detail=f"Failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch change summary")

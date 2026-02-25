@@ -31,7 +31,7 @@ async def create_conversation(request: ConversationCreate):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("Create conversation error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to create conversation")
 
 
 @router.get("/conversations/{conversation_id}")
@@ -50,7 +50,7 @@ async def get_conversation(conversation_id: int):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("Get conversation error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to get conversation")
 
 
 @router.post("/conversations/{conversation_id}/messages")
@@ -69,7 +69,7 @@ async def add_message(conversation_id: int, request: MessageCreate):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("Add message error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to add message")
 
 
 @router.get("/conversations")
@@ -91,4 +91,4 @@ async def list_conversations(
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error("List conversations error: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to list conversations")

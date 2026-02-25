@@ -18,10 +18,8 @@ X-API-Key: <your-key>
 Public endpoints (no key required):
 
 - `GET /health`
-- `GET /config`
-- `GET /docs`
-- `GET /redoc`
-- `GET /openapi.json`
+- `GET /config` only when `EXPOSE_CONFIG_PUBLIC=true`
+- `GET /docs`, `GET /redoc`, `GET /openapi.json` only when `EXPOSE_API_DOCS=true`
 
 If `BRAIN_API_KEY` is empty, auth is effectively disabled.
 
@@ -55,6 +53,7 @@ If `BRAIN_API_KEY` is empty, auth is effectively disabled.
 | GET | `/conversations/{conversation_id}` | Get conversation + messages |
 | POST | `/conversations/{conversation_id}/messages` | Add conversation message |
 | GET | `/conversations` | List recent conversations |
+| GET | `/security/self-check` | Security posture report |
 
 ## Core Request/Response Shapes
 
@@ -200,11 +199,33 @@ Returns:
 - `conversations[]`
 - `count`
 
+## `GET /security/self-check`
+
+Returns a security report including:
+
+- `mode` (`local` or `public`)
+- `fail_fast` (whether startup enforces failures)
+- `safe` (overall pass/fail)
+- `failed_checks`, `warning_checks`
+- `checks[]` with per-check status (`pass`, `warn`, `fail`)
+
 ## Error Notes
 
 - `400`: bad input (for example unknown sync mode, unknown RAG technique)
 - `401`: missing API key (when auth enabled)
 - `403`: invalid API key
 - `404`: missing file/conversation
+- `413`: request body too large
+- `429`: rate limit exceeded
 - `503`: required backend unavailable (for example PostgreSQL not configured)
 - `500`: internal error
+
+Rate-limit response headers include:
+- `Retry-After`
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Window`
+
+Request-size rejection (`413`) includes:
+- `X-Max-Request-Bytes`
+- `X-Request-Bytes`
