@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Retrospective"
+  short_description: "Capture lessons and harden future runs."
+  default_prompt: "Use this skill after each coding session to log outcomes and synthesize lessons for better future runs."

@@ -13,6 +13,46 @@ A local daemon that indexes an Obsidian vault and exposes a REST API for search,
 - **Vector Search**: Semantic similarity search using embeddings
 - **Multi-Provider LLM**: Supports OpenAI, Google Gemini, and local Ollama models
 
+## Agent Skills and Learning Loop
+
+This repo now includes shared agent instructions and skills for Codex, Copilot, and Antigravity:
+
+- `AGENTS.md`: shared operating workflow
+- `agents/skills/secondbrain-maintainer`: project coding workflow skill
+- `agents/skills/agent-retrospective`: post-run learning skill
+- `agents/memory/LESSONS.md`: synthesized lessons from prior runs
+
+Use this after each meaningful coding session:
+
+```powershell
+python agents/skills/agent-retrospective/scripts/log_run.py `
+  --agent codex `
+  --task "<task>" `
+  --status success `
+  --summary "<result>" `
+  --lesson "<reusable lesson>"
+
+python agents/skills/agent-retrospective/scripts/synthesize_lessons.py
+```
+
+Shortcut:
+
+```powershell
+.\agents\scripts\close_loop.ps1 -Agent codex -Task "<task>" -Status success -Summary "<result>" -Lesson "<lesson>"
+```
+
+Install post-commit auto-log:
+
+```powershell
+.\agents\scripts\install_git_hooks.ps1 -Agent codex
+```
+
+Show dashboard metrics:
+
+```powershell
+.\agents\scripts\show_dashboard.ps1 -Window 100 -Days 14 -Top 5
+```
+
 ## Requirements
 
 - Python 3.10+

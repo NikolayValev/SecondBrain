@@ -21,6 +21,8 @@ env/
 
 # Logs
 *.log
+agents/memory/runs.jsonl
+agents/memory/last_run.json
 
 # OS
 .DS_Store

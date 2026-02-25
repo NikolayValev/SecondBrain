@@ -1,116 +1,69 @@
-# Second Brain - AI Coding Instructions
+# Second Brain Copilot Instructions
 
-## Architecture Overview
+Follow this order on every coding task:
 
-Second Brain is a **local daemon** that indexes an Obsidian vault and exposes a FastAPI REST API. Key architecture:
+1. Read `AGENTS.md`.
+2. Read `agents/memory/LESSONS.md`.
+3. Use `agents/skills/secondbrain-maintainer/SKILL.md` for code changes.
+4. Use `agents/skills/agent-retrospective/SKILL.md` after completion.
 
-```
-┌─────────────────┐     ┌───────────────┐     ┌─────────────────┐
-│  Obsidian Vault │────▶│  SQLite (FTS5)│────▶│  PostgreSQL     │
-│  (markdown)     │     │  (local)      │     │  (Prisma/Next.js)│
-└─────────────────┘     └───────────────┘     └─────────────────┘
-        │                       │
-        ▼                       ▼
-┌─────────────────┐     ┌───────────────┐
-│  File Watcher   │     │  RAG Pipeline │
-│  (watchdog)     │     │  (LLM + embed)│
-└─────────────────┘     └───────────────┘
-```
+## Architecture Map
 
-**Data Flow**: Files → `parser.py` → `indexer.py` → `db.py` (SQLite) → `sync_service.py` → `db_postgres.py` (PostgreSQL)
+- App composition/lifespan: `app/main.py`
+- HTTP handlers: `app/api/routes/*`
+- API contracts: `app/api/models/*`
+- Business logic: `app/services/*`
+- Primary datastore: SQLite (`app/db.py`, includes FTS5 + conversations)
+- Optional mirror datastore: PostgreSQL (`app/db_postgres.py`) via `app/sync_service.py`
+- RAG pipeline: `app/rag_techniques.py` -> `app/embeddings.py` -> `app/vector_search.py` -> `app/services/rag_service.py` -> `app/llm.py`
 
-**RAG Pipeline**: Query → `embeddings.py` → `vector_search.py` → `llm.py` → `rag.py`
+## Coding Patterns
 
-## Key Modules & Patterns
+- Prefer existing singleton instances for production paths.
+- Instantiate classes directly in tests when dependency injection is needed.
+- Keep async flows async end-to-end in API and PostgreSQL paths.
+- Preserve packed-float embedding compatibility.
+- Keep route handlers thin; place behavior changes in service modules.
+- Account for `LLM_PROVIDER` and `EMBEDDING_PROVIDER` as separate knobs.
 
-| Module | Responsibility | Singleton Instance |
-|--------|---------------|-------------------|
-| [app/db.py](app/db.py) | SQLite with FTS5 full-text search | `db` |
-| [app/db_postgres.py](app/db_postgres.py) | Async PostgreSQL (asyncpg) for Prisma | `get_postgres_db()` |
-| [app/indexer.py](app/indexer.py) | File indexing orchestration | `indexer` |
-| [app/watcher.py](app/watcher.py) | Debounced file system monitoring | `watcher` |
-| [app/llm.py](app/llm.py) | Multi-provider LLM abstraction | `get_llm_provider()` |
-| [app/embeddings.py](app/embeddings.py) | Embedding generation & storage | `embedding_service` |
-| [app/rag.py](app/rag.py) | RAG Q&A orchestration | `rag_service` |
-
-**Pattern**: Most modules export a singleton instance (lowercase) alongside the class. Use the singleton for production, instantiate the class directly for testing with dependency injection.
-
-## LLM Provider Pattern
-
-The codebase uses a **strategy pattern** for LLM providers. All providers extend `LLMProvider` ABC:
-
-```python
-# In app/llm.py - use get_llm_provider() to get configured provider
-provider = llm.get_llm_provider()  # Returns OpenAI/Gemini/Ollama based on LLM_PROVIDER
-await provider.chat(messages=[{"role": "user", "content": "..."}])
-await provider.embed("text")  # Returns list[float]
-```
-
-Configured via `.env`: `LLM_PROVIDER=gemini|openai|ollama`
-
-## Dual Database Architecture
-
-- **SQLite** (`db.py`): Primary local storage with FTS5 for full-text search. Sync operations.
-- **PostgreSQL** (`db_postgres.py`): Remote sync target for Next.js/Prisma consumption. Fully async with asyncpg.
-
-The Prisma schema in [prisma/schema.prisma](prisma/schema.prisma) defines the PostgreSQL structure. Sync is handled by `sync_service.py`.
-
-## Commands & Workflows
+## Verification Commands
 
 ```powershell
-# Development server (with hot reload)
+pytest
+pytest tests/test_api.py -v
+pytest -k "test_search" -v
 python -m uvicorn app.main:app --reload
-
-# Run tests
-pytest                          # All tests
-pytest tests/test_api.py -v     # Specific file
-pytest -k "test_search"         # Pattern match
-
-# Direct module run
-python -m app.main
 ```
 
-## Test Fixtures
+## Continuous Improvement
 
-Tests use fixtures from [tests/conftest.py](tests/conftest.py):
-- `temp_dir` / `temp_vault`: Isolated temp directories with sample markdown
-- `test_db`: Fresh Database instance with temp path
-- `test_indexer`: Indexer wired to test fixtures
+After meaningful changes, log the run and refresh shared lessons:
 
-**Async tests**: Use `pytest.mark.asyncio` (mode set to `auto` in pytest.ini).
+```powershell
+python agents/skills/agent-retrospective/scripts/log_run.py `
+  --agent copilot `
+  --task "<task>" `
+  --status success `
+  --summary "<result>" `
+  --lesson "<reusable lesson>"
 
-## Embedding Storage Format
-
-Embeddings are stored as packed binary floats:
-```python
-# Encode: list[float] → bytes
-embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
-# Decode: bytes → list[float]
-embedding = struct.unpack(f'{num_floats}f', data)
+python agents/skills/agent-retrospective/scripts/synthesize_lessons.py
 ```
 
-## Inbox Processor Classification
+Shortcut:
 
-The inbox processor ([app/inbox_processor.py](app/inbox_processor.py)) uses a pluggable classification system:
-- `ClassificationMethod.RULES_ONLY`: Regex patterns on title/content/tags
-- `ClassificationMethod.LLM_ONLY`: LLM-based classification
-- `ClassificationMethod.RULES_THEN_LLM`: Rules first, LLM fallback
-
-Configure via `inbox_config.yaml`.
-
-## Environment Variables
-
-Key variables in `.env`:
-```ini
-VAULT_PATH=C:\path\to\obsidian\vault  # Required
-LLM_PROVIDER=gemini|openai|ollama
-GEMINI_API_KEY=...                    # Required if using Gemini
-DATABASE_URL=postgres://...           # For Prisma sync
+```powershell
+.\agents\scripts\close_loop.ps1 -Agent copilot -Task "<task>" -Status success -Summary "<result>" -Lesson "<lesson>"
 ```
 
-## API Endpoints Pattern
+Install post-commit auto-log (once per clone):
 
-All endpoints are defined in [app/main.py](app/main.py) with Pydantic models for request/response. Follow existing patterns:
-- Use `BaseModel` for all request/response types
-- Return `JSONResponse` for errors with appropriate status codes
-- Async endpoints for any I/O operations
+```powershell
+.\agents\scripts\install_git_hooks.ps1 -Agent copilot
+```
+
+Open metrics dashboard:
+
+```powershell
+.\agents\scripts\show_dashboard.ps1 -Agent copilot -Window 100 -Days 14 -Top 5
+```

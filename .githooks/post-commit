@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -u
+
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "${repo_root}" ]; then
+  exit 0
+fi
+
+cd "${repo_root}" || exit 0
+
+enabled="$(git config --get secondbrain.postCommitLog || true)"
+enabled="${enabled:-true}"
+case "${enabled,,}" in
+  false|0|no|off)
+    exit 0
+    ;;
+esac
+
+if ! command -v python >/dev/null 2>&1; then
+  exit 0
+fi
+
+log_script="agents/skills/agent-retrospective/scripts/log_run.py"
+if [ ! -f "${log_script}" ]; then
+  exit 0
+fi
+
+agent="$(git config --get secondbrain.retrospectiveAgent || true)"
+case "${agent}" in
+  codex|copilot|antigravity|other) ;;
+  *) agent="codex" ;;
+esac
+
+commit_short="$(git rev-parse --short HEAD 2>/dev/null || true)"
+subject="$(git log -1 --pretty=%s 2>/dev/null || true)"
+subject="${subject:-commit}"
+
+summary="Post-commit auto-log for ${commit_short}: ${subject}"
+task="git commit: ${subject}"
+
+cmd=(
+  python
+  "${log_script}"
+  --agent "${agent}"
+  --task "${task}"
+  --status success
+  --summary "${summary}"
+  --tag git
+  --tag automation
+  --command "git commit"
+  --root "."
+)
+
+while IFS= read -r file; do
+  if [ -n "${file}" ]; then
+    cmd+=(--file "${file}")
+  fi
+done < <(git diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null)
+
+"${cmd[@]}" >/dev/null 2>&1 || true
+exit 0

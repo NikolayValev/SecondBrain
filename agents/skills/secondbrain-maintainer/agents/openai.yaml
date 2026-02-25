@@ -1,0 +1,4 @@
+interface:
+  display_name: "SecondBrain Maintainer"
+  short_description: "Maintain SecondBrain safely with tests."
+  default_prompt: "Use this skill to implement and validate changes in the SecondBrain codebase with minimal risk."
