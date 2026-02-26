@@ -15,7 +15,8 @@ Use this workflow for all repository code changes.
 4. Change the smallest surface that fully solves the task.
 5. Run targeted tests first, then wider tests when risk is high.
 6. Report behavior changes, touched files, and remaining risks.
-7. Trigger `agent-retrospective` after completion.
+7. If behavior/config/ops changed, update human docs (`README.md`, `docs/*.md`) in the same task.
+8. Trigger `agent-retrospective` after completion.
 
 ## Module Mapping
 
@@ -38,6 +39,7 @@ Use this workflow for all repository code changes.
 - Preserve `EMBEDDING_PROVIDER` override behavior when changing provider logic.
 - Preserve API response shapes unless a contract change is requested.
 - Add or update tests with every behavioral change.
+- Keep `AGENTS.md` lean and tribal; do not copy human-oriented usage/reference content into agent docs.
 
 ## Validation
 

@@ -4,7 +4,7 @@ RAG-related API models: ask, sources, embeddings.
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config import Config
 
@@ -13,8 +13,13 @@ class AskRequest(BaseModel):
     """Request body for /ask endpoint."""
     question: str
     conversation_id: Optional[str] = None
+    system_prompt: Optional[str] = None
     provider: str = Config.LLM_PROVIDER
     model: Optional[str] = None
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=None, ge=1, le=32768)
+    top_p: Optional[float] = Field(default=None, gt=0.0, le=1.0)
+    top_k: Optional[int] = Field(default=None, ge=1, le=500)
     rag_technique: str = "hybrid"
     include_sources: bool = True
     stream: bool = False

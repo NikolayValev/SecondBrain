@@ -7,21 +7,20 @@ provider selection, prompt building, and source formatting.
 
 import json as _json
 import logging
-import uuid
 from typing import AsyncIterator, Optional
 
-from app.config import Config
-from app.db import db
-from app.embeddings import embedding_service
-from app.rag_techniques import get_technique
 from app import llm
 from app.api.models.rag import (
     AskRequest,
     AskResponse,
+    EmbeddingStatsResponse,
     Source,
     TokenUsage,
-    EmbeddingStatsResponse,
 )
+from app.config import Config
+from app.db import db
+from app.embeddings import embedding_service
+from app.rag_techniques import get_technique
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,11 @@ class RAGAPIService:
         Raises:
             ValueError: For bad provider / technique names.
         """
+        conversation_id = self._resolve_or_create_conversation_id(
+            request.conversation_id,
+            title=request.question[:80],
+        )
+
         technique = get_technique(request.rag_technique)
 
         rag_context = await technique.retrieve(
@@ -67,34 +71,42 @@ class RAGAPIService:
             return AskResponse(
                 answer="I couldn't find any relevant information in your knowledge base to answer this question.",
                 sources=[],
-                conversation_id=request.conversation_id or str(uuid.uuid4()),
+                conversation_id=str(conversation_id),
                 model_used=model_used,
             )
 
         provider = llm.get_provider_by_name(request.provider)
+        if request.system_prompt and request.system_prompt.strip():
+            self._save_system_prompt(conversation_id, request.system_prompt.strip())
+        system_prompt = self._resolve_system_prompt(conversation_id)
 
         user_message = (
             f"Context from knowledge base:\n---\n{rag_context.context_text}\n---\n\n"
             f"Question: {request.question}\n\nAnswer based on the context above:"
         )
 
-        # Build messages — include conversation history when available
+        # Build messages and include conversation history when available.
         messages = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
         ]
 
-        history = self._get_history(request.conversation_id)
+        history = self._get_history(conversation_id)
         if history:
             messages.extend(history)
 
         messages.append({"role": "user", "content": user_message})
 
-        chat_result = await provider.chat_with_usage(messages=messages)
+        chat_result = await provider.chat_with_usage(
+            messages=messages,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            top_p=request.top_p,
+            top_k=request.top_k,
+        )
 
         sources = self._build_sources(rag_context, include=request.include_sources)
-        conversation_id = request.conversation_id or str(uuid.uuid4())
 
-        # Persist the exchange
         self._save_exchange(
             conversation_id=conversation_id,
             question=request.question,
@@ -105,7 +117,7 @@ class RAGAPIService:
         return AskResponse(
             answer=chat_result.content,
             sources=sources,
-            conversation_id=conversation_id,
+            conversation_id=str(conversation_id),
             model_used=model_used,
             tokens_used=TokenUsage(
                 prompt=chat_result.usage.prompt,
@@ -120,10 +132,15 @@ class RAGAPIService:
 
         Yields ``data: <json>\n\n`` strings suitable for an SSE response.
         Events:
-        * ``{"type":"source", ...}``  – one per source (sent first)
-        * ``{"type":"token", "content":"..."}``  – streamed tokens
-        * ``{"type":"done", "conversation_id":"..."}`` – final event
+        * ``{"type":"source", ...}``  - one per source (sent first)
+        * ``{"type":"token", "content":"..."}``  - streamed tokens
+        * ``{"type":"done", "conversation_id":"..."}`` - final event
         """
+        conversation_id = self._resolve_or_create_conversation_id(
+            request.conversation_id,
+            title=request.question[:80],
+        )
+
         technique = get_technique(request.rag_technique)
 
         rag_context = await technique.retrieve(
@@ -133,41 +150,47 @@ class RAGAPIService:
         )
 
         model_used = self._resolve_model(request)
-        conversation_id = request.conversation_id or str(uuid.uuid4())
 
         if not rag_context.chunks:
             yield self._sse({"type": "token", "content": "I couldn't find any relevant information in your knowledge base to answer this question."})
-            yield self._sse({"type": "done", "conversation_id": conversation_id, "model_used": model_used})
+            yield self._sse({"type": "done", "conversation_id": str(conversation_id), "model_used": model_used})
             return
 
-        # Send sources first
+        # Send sources first.
         sources = self._build_sources(rag_context, include=request.include_sources)
         for src in sources:
             yield self._sse({"type": "source", **src.model_dump()})
 
-        # Build messages
         provider = llm.get_provider_by_name(request.provider)
+        if request.system_prompt and request.system_prompt.strip():
+            self._save_system_prompt(conversation_id, request.system_prompt.strip())
+        system_prompt = self._resolve_system_prompt(conversation_id)
         user_message = (
             f"Context from knowledge base:\n---\n{rag_context.context_text}\n---\n\n"
             f"Question: {request.question}\n\nAnswer based on the context above:"
         )
         messages: list[dict[str, str]] = [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
         ]
-        history = self._get_history(request.conversation_id)
+        history = self._get_history(conversation_id)
         if history:
             messages.extend(history)
         messages.append({"role": "user", "content": user_message})
 
-        # Stream tokens
         full_answer_parts: list[str] = []
-        async for token in provider.stream_chat(messages=messages):
+        async for token in provider.stream_chat(
+            messages=messages,
+            model=request.model,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+            top_p=request.top_p,
+            top_k=request.top_k,
+        ):
             full_answer_parts.append(token)
             yield self._sse({"type": "token", "content": token})
 
         full_answer = "".join(full_answer_parts)
 
-        # Persist
         self._save_exchange(
             conversation_id=conversation_id,
             question=request.question,
@@ -175,7 +198,7 @@ class RAGAPIService:
             sources=sources,
         )
 
-        yield self._sse({"type": "done", "conversation_id": conversation_id, "model_used": model_used})
+        yield self._sse({"type": "done", "conversation_id": str(conversation_id), "model_used": model_used})
 
     @staticmethod
     def _sse(data: dict) -> str:
@@ -191,10 +214,9 @@ class RAGAPIService:
         Returns:
             Dict with processed / failed / pending counts.
         """
-        # Auto-create chunks if none exist yet
         stats = db.get_embedding_stats()
         if stats["chunk_count"] == 0:
-            logger.info("No chunks found — auto-generating from indexed files")
+            logger.info("No chunks found - auto-generating from indexed files")
             self._create_chunks_for_all_files()
 
         success, failed = await embedding_service.process_pending_chunks(limit=limit)
@@ -211,8 +233,8 @@ class RAGAPIService:
         """Create chunks for every indexed file that has no chunks yet."""
         all_files = db.get_all_files()
         total_chunks = 0
-        for f in all_files:
-            file_id = f["id"]
+        for file_record in all_files:
+            file_id = file_record["id"]
             existing = db.get_chunks_by_file(file_id)
             if existing:
                 continue
@@ -232,44 +254,96 @@ class RAGAPIService:
     # Helpers
     # ------------------------------------------------------------------
 
+    def _resolve_or_create_conversation_id(
+        self,
+        requested_conversation_id: Optional[str],
+        *,
+        title: str,
+    ) -> int:
+        """
+        Resolve request conversation identifier to an existing SQLite conversation id.
+
+        Rules:
+        - Missing id: create a new conversation.
+        - Numeric id: use it when it exists; otherwise create a new conversation.
+        - Non-numeric id: treat as a legacy/session key and map by session_id.
+        """
+        if not requested_conversation_id:
+            return db.create_conversation(title=title)
+
+        candidate = requested_conversation_id.strip()
+        if not candidate:
+            return db.create_conversation(title=title)
+
+        try:
+            conversation_id = int(candidate)
+        except (ValueError, TypeError):
+            existing = db.get_recent_conversations(session_id=candidate, limit=1)
+            if existing:
+                return int(existing[0]["id"])
+            return db.create_conversation(session_id=candidate, title=title)
+
+        if db.get_conversation(conversation_id) is not None:
+            return conversation_id
+        return db.create_conversation(title=title)
+
+    def _resolve_system_prompt(self, conversation_id: Optional[int]) -> str:
+        """Resolve the effective system prompt for a conversation."""
+        custom_prompt = self._get_latest_system_prompt(conversation_id)
+        if not custom_prompt:
+            return _SYSTEM_PROMPT
+        return f"{_SYSTEM_PROMPT}\n\nConversation-specific instructions:\n{custom_prompt}"
+
+    def _get_latest_system_prompt(self, conversation_id: Optional[int]) -> Optional[str]:
+        """Return the latest non-empty system prompt stored for a conversation."""
+        if not conversation_id:
+            return None
+        messages = db.get_conversation_messages(conversation_id, limit=50)
+        for message in reversed(messages):
+            if message.get("role") != "system":
+                continue
+            content = str(message.get("content", "")).strip()
+            if content:
+                return content
+        return None
+
+    def _save_system_prompt(self, conversation_id: int, system_prompt: str) -> None:
+        """Persist a conversation system prompt as a dedicated system message."""
+        prompt = system_prompt.strip()
+        if not prompt:
+            return
+        latest = self._get_latest_system_prompt(conversation_id)
+        if latest == prompt:
+            return
+        db.add_message(conversation_id=conversation_id, role="system", content=prompt)
+
     @staticmethod
-    def _get_history(conversation_id: Optional[str]) -> list[dict[str, str]]:
+    def _get_history(conversation_id: Optional[int]) -> list[dict[str, str]]:
         """Fetch prior messages for the conversation from SQLite."""
         if not conversation_id:
             return []
-        try:
-            cid = int(conversation_id)
-        except (ValueError, TypeError):
-            return []
 
-        messages = db.get_conversation_messages(cid, limit=10)
-        # Return only role + content (strip sources / ids)
+        messages = db.get_conversation_messages(conversation_id, limit=10)
         return [
-            {"role": m["role"], "content": m["content"]}
-            for m in messages
-            if m["role"] in ("user", "assistant")
+            {"role": message["role"], "content": message["content"]}
+            for message in messages
+            if message["role"] in ("user", "assistant")
         ]
 
     @staticmethod
     def _save_exchange(
-        conversation_id: str,
+        conversation_id: int,
         question: str,
         answer: str,
         sources: list[Source],
     ) -> None:
         """Persist the user question and assistant answer in SQLite."""
-        try:
-            cid = int(conversation_id)
-        except (ValueError, TypeError):
-            # First time — create conversation with generated id
+        cid = conversation_id
+        if db.get_conversation(cid) is None:
             cid = db.create_conversation(title=question[:80])
-        else:
-            # Ensure the conversation row exists
-            if db.get_conversation(cid) is None:
-                cid = db.create_conversation(title=question[:80])
 
         db.add_message(conversation_id=cid, role="user", content=question)
-        source_dicts = [s.model_dump() for s in sources] if sources else None
+        source_dicts = [source.model_dump() for source in sources] if sources else None
         db.add_message(
             conversation_id=cid,
             role="assistant",
@@ -294,21 +368,27 @@ class RAGAPIService:
         """Deduplicate chunks into a list of Source models."""
         if not include:
             return []
+
         sources: list[Source] = []
         seen_files: set[str] = set()
         for chunk in rag_context.chunks:
-            if chunk.file_path not in seen_files:
-                sources.append(Source(
+            if chunk.file_path in seen_files:
+                continue
+
+            snippet = chunk.chunk_content
+            if len(snippet) > 200:
+                snippet = snippet[:200] + "..."
+
+            sources.append(
+                Source(
                     path=chunk.file_path,
                     title=chunk.file_title,
-                    snippet=(
-                        chunk.chunk_content[:200] + "..."
-                        if len(chunk.chunk_content) > 200
-                        else chunk.chunk_content
-                    ),
+                    snippet=snippet,
                     score=round(chunk.similarity, 3),
-                ))
-                seen_files.add(chunk.file_path)
+                )
+            )
+            seen_files.add(chunk.file_path)
+
         return sources
 
 

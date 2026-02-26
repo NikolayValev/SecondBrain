@@ -37,8 +37,11 @@ class LLMProvider(ABC):
     async def chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> str:
         """
         Send a chat completion request.
@@ -56,8 +59,11 @@ class LLMProvider(ABC):
     async def chat_with_usage(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> ChatResult:
         """
         Send a chat completion and return both text and token usage.
@@ -65,14 +71,24 @@ class LLMProvider(ABC):
         Default implementation calls :meth:`chat` and returns zero usage.
         Providers should override to extract real token counts.
         """
-        content = await self.chat(messages, temperature, max_tokens)
+        content = await self.chat(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+        )
         return ChatResult(content=content)
 
     async def stream_chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> AsyncIterator[str]:
         """
         Stream a chat completion token-by-token.
@@ -80,7 +96,14 @@ class LLMProvider(ABC):
         Default implementation falls back to non-streaming :meth:`chat`
         and yields the full response as one chunk.
         """
-        full = await self.chat(messages, temperature, max_tokens)
+        full = await self.chat(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+        )
         yield full
     
     @abstractmethod
@@ -128,24 +151,40 @@ class OpenAIProvider(LLMProvider):
     async def chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> str:
-        result = await self.chat_with_usage(messages, temperature, max_tokens)
+        result = await self.chat_with_usage(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+        )
         return result.content
 
     async def chat_with_usage(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> ChatResult:
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature or self.default_temperature,
-            max_tokens=max_tokens or self.default_max_tokens,
-        )
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": self.default_temperature if temperature is None else temperature,
+            "max_tokens": self.default_max_tokens if max_tokens is None else max_tokens,
+        }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        response = await self.client.chat.completions.create(**payload)
         content = response.choices[0].message.content or ""
         usage = TokenUsage()
         if response.usage:
@@ -159,16 +198,22 @@ class OpenAIProvider(LLMProvider):
     async def stream_chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> AsyncIterator[str]:
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=temperature or self.default_temperature,
-            max_tokens=max_tokens or self.default_max_tokens,
-            stream=True,
-        )
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": self.default_temperature if temperature is None else temperature,
+            "max_tokens": self.default_max_tokens if max_tokens is None else max_tokens,
+            "stream": True,
+        }
+        if top_p is not None:
+            payload["top_p"] = top_p
+        stream = await self.client.chat.completions.create(**payload)
         async for chunk in stream:
             delta = chunk.choices[0].delta if chunk.choices else None
             if delta and delta.content:
@@ -206,17 +251,30 @@ class GeminiProvider(LLMProvider):
     async def chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> str:
-        result = await self.chat_with_usage(messages, temperature, max_tokens)
+        result = await self.chat_with_usage(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+        )
         return result.content
 
     async def chat_with_usage(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> ChatResult:
         # Convert messages to Gemini format
         gemini_messages = []
@@ -250,13 +308,18 @@ class GeminiProvider(LLMProvider):
                 parts=[self.types.Part(text=f"{system_msg}\n\n{original_text}")]
             )
         
-        config = self.types.GenerateContentConfig(
-            temperature=temperature or self.default_temperature,
-            max_output_tokens=max_tokens or self.default_max_tokens,
-        )
+        config_kwargs = {
+            "temperature": self.default_temperature if temperature is None else temperature,
+            "max_output_tokens": self.default_max_tokens if max_tokens is None else max_tokens,
+        }
+        if top_p is not None:
+            config_kwargs["top_p"] = top_p
+        if top_k is not None:
+            config_kwargs["top_k"] = top_k
+        config = self.types.GenerateContentConfig(**config_kwargs)
         
         response = await self.client.aio.models.generate_content(
-            model=self.model_name,
+            model=model or self.model_name,
             contents=contents,
             config=config,
         )
@@ -299,19 +362,27 @@ class OllamaProvider(LLMProvider):
     async def chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> str:
+        options = {
+            "temperature": self.default_temperature if temperature is None else temperature,
+            "num_predict": self.default_max_tokens if max_tokens is None else max_tokens,
+        }
+        if top_p is not None:
+            options["top_p"] = top_p
+        if top_k is not None:
+            options["top_k"] = top_k
         response = await self.client.post(
             f"{self.base_url}/api/chat",
             json={
-                "model": self.model,
+                "model": model or self.model,
                 "messages": messages,
                 "stream": False,
-                "options": {
-                    "temperature": temperature or self.default_temperature,
-                    "num_predict": max_tokens or self.default_max_tokens,
-                },
+                "options": options,
             },
         )
         response.raise_for_status()
@@ -321,22 +392,30 @@ class OllamaProvider(LLMProvider):
     async def stream_chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> AsyncIterator[str]:
         import json as _json
+        options = {
+            "temperature": self.default_temperature if temperature is None else temperature,
+            "num_predict": self.default_max_tokens if max_tokens is None else max_tokens,
+        }
+        if top_p is not None:
+            options["top_p"] = top_p
+        if top_k is not None:
+            options["top_k"] = top_k
 
         async with self.client.stream(
             "POST",
             f"{self.base_url}/api/chat",
             json={
-                "model": self.model,
+                "model": model or self.model,
                 "messages": messages,
                 "stream": True,
-                "options": {
-                    "temperature": temperature or self.default_temperature,
-                    "num_predict": max_tokens or self.default_max_tokens,
-                },
+                "options": options,
             },
         ) as resp:
             resp.raise_for_status()
@@ -430,17 +509,30 @@ class AnthropicProvider(LLMProvider):
     async def chat(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> str:
-        result = await self.chat_with_usage(messages, temperature, max_tokens)
+        result = await self.chat_with_usage(
+            messages=messages,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            top_k=top_k,
+        )
         return result.content
 
     async def chat_with_usage(
         self,
         messages: list[dict[str, str]],
+        model: Optional[str] = None,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
     ) -> ChatResult:
         # Extract system message
         system_msg = None
@@ -455,11 +547,15 @@ class AnthropicProvider(LLMProvider):
                 })
         
         kwargs = {
-            "model": self.model,
+            "model": model or self.model,
             "messages": chat_messages,
-            "temperature": temperature or self.default_temperature,
-            "max_tokens": max_tokens or self.default_max_tokens,
+            "temperature": self.default_temperature if temperature is None else temperature,
+            "max_tokens": self.default_max_tokens if max_tokens is None else max_tokens,
         }
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if top_k is not None:
+            kwargs["top_k"] = top_k
         if system_msg:
             kwargs["system"] = system_msg
         
@@ -529,8 +625,11 @@ def get_llm_provider() -> LLMProvider:
 
 async def chat(
     messages: list[dict[str, str]],
+    model: Optional[str] = None,
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
 ) -> str:
     """
     Convenience function for chat completion.
@@ -544,7 +643,14 @@ async def chat(
         The assistant's response text.
     """
     provider = get_llm_provider()
-    return await provider.chat(messages, temperature, max_tokens)
+    return await provider.chat(
+        messages=messages,
+        model=model,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        top_p=top_p,
+        top_k=top_k,
+    )
 
 
 async def embed(text: str) -> list[float]:

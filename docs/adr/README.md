@@ -8,6 +8,7 @@ This folder stores concise, durable architectural decisions that agents should c
 - [0002-sqlite-primary-postgres-mirror](./0002-sqlite-primary-postgres-mirror.md)
 - [0003-public-api-security-baseline](./0003-public-api-security-baseline.md)
 - [0004-request-size-guardrails-public-api](./0004-request-size-guardrails-public-api.md)
+- [0005-per-request-llm-tuning-parameters](./0005-per-request-llm-tuning-parameters.md)
 
 ## When To Add A New ADR
 

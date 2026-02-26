@@ -114,6 +114,8 @@ async def get_changes_since(
         return await sync_api_service.get_changes_since(since)
     except EnvironmentError as e:
         raise HTTPException(status_code=503, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error("Changes-since error: %s", e)
         raise HTTPException(status_code=500, detail="Failed to fetch change summary")

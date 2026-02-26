@@ -9,6 +9,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.search import router as search_router
 from app.api.routes.files import router as files_router
 from app.api.routes.rag import router as rag_router
+from app.api.routes.graph import router as graph_router
 from app.api.routes.inbox import router as inbox_router
 from app.api.routes.sync import router as sync_router
 from app.api.routes.indexing import router as indexing_router
@@ -20,6 +21,7 @@ all_routers = [
     search_router,
     files_router,
     rag_router,
+    graph_router,
     inbox_router,
     sync_router,
     indexing_router,

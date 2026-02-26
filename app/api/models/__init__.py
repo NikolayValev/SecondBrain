@@ -31,6 +31,11 @@ from app.api.models.files import (
     TagItem,
     TagsResponse,
 )
+from app.api.models.graph import (
+    GraphNode,
+    GraphEdge,
+    GraphResponse,
+)
 from app.api.models.rag import (
     AskRequest,
     Source,
@@ -91,6 +96,10 @@ __all__ = [
     "BacklinksResponse",
     "TagItem",
     "TagsResponse",
+    # Graph
+    "GraphNode",
+    "GraphEdge",
+    "GraphResponse",
     # RAG
     "AskRequest",
     "Source",

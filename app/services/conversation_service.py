@@ -22,9 +22,21 @@ def _pg_available() -> bool:
 class ConversationService:
     """Manages conversations stored in SQLite (primary) + optional PG sync."""
 
-    async def create(self, session_id: Optional[str] = None, title: Optional[str] = None) -> dict:
+    async def create(
+        self,
+        session_id: Optional[str] = None,
+        title: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+    ) -> dict:
         """Create a new conversation and return its id."""
         conv_id = db.create_conversation(session_id=session_id, title=title)
+
+        if system_prompt and system_prompt.strip():
+            db.add_message(
+                conversation_id=conv_id,
+                role="system",
+                content=system_prompt.strip(),
+            )
 
         # Mirror to PG when available
         if _pg_available():

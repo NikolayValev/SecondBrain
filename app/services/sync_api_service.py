@@ -94,14 +94,7 @@ class SyncAPIService:
 
         The frontend can poll this to decide when to trigger a full/incremental sync.
         """
-        # Parse the optional ISO timestamp
-        since_ts: Optional[str] = None
-        if since:
-            try:
-                dt = datetime.fromisoformat(since)
-                since_ts = dt.isoformat()
-            except ValueError:
-                since_ts = since  # best-effort
+        since_sqlite, since_epoch = self._parse_since(since)
 
         changed_files = 0
         changed_chunks = 0
@@ -109,20 +102,32 @@ class SyncAPIService:
         changed_conversations = 0
 
         all_files = db.get_all_files()
-        for f in all_files:
-            if since_ts is None or f.get("mtime", 0) > datetime.fromisoformat(since_ts).timestamp() if since_ts else True:
-                changed_files += 1
+        if since_epoch is None:
+            changed_files = len(all_files)
+        else:
+            for file_record in all_files:
+                if float(file_record.get("mtime", 0) or 0) > since_epoch:
+                    changed_files += 1
 
-        # Simple approach: count totals from SQLite
         with db.cursor() as cur:
-            if since_ts:
-                cur.execute("SELECT COUNT(*) FROM chunks WHERE id > 0")
+            if since_sqlite is not None and since_epoch is not None:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) FROM chunks c
+                    JOIN files f ON f.id = c.file_id
+                    WHERE f.mtime > ?
+                    """,
+                    (since_epoch,),
+                )
                 changed_chunks = cur.fetchone()[0]
-                cur.execute("SELECT COUNT(*) FROM embeddings WHERE id > 0")
+                cur.execute(
+                    "SELECT COUNT(*) FROM embeddings WHERE created_at > ?",
+                    (since_sqlite,),
+                )
                 changed_embeddings = cur.fetchone()[0]
                 cur.execute(
                     "SELECT COUNT(*) FROM conversations WHERE updated_at > ?",
-                    (since_ts,),
+                    (since_sqlite,),
                 )
                 changed_conversations = cur.fetchone()[0]
             else:
@@ -141,6 +146,33 @@ class SyncAPIService:
             "conversations": changed_conversations,
             "has_changes": (changed_files + changed_chunks + changed_embeddings + changed_conversations) > 0,
         }
+
+    @staticmethod
+    def _parse_since(since: Optional[str]) -> tuple[Optional[str], Optional[float]]:
+        """
+        Parse an optional ISO-8601 timestamp.
+
+        Returns:
+            Tuple of:
+            - SQLite comparable UTC-naive ISO string
+            - epoch seconds float for mtime comparisons
+        """
+        if since is None:
+            return None, None
+
+        raw = since.strip()
+        if not raw:
+            return None, None
+
+        normalized = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+        try:
+            dt = datetime.fromisoformat(normalized)
+        except ValueError as exc:
+            raise ValueError("Invalid 'since' timestamp. Use ISO-8601 format.") from exc
+
+        dt_utc = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+        since_sqlite = dt_utc.replace(tzinfo=None).isoformat()
+        return since_sqlite, dt_utc.timestamp()
 
 
 # Singleton

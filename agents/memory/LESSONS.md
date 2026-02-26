@@ -1,16 +1,16 @@
 # Agent Lessons
-_Auto-generated from `agents/memory/runs.jsonl` on 2026-02-25T05:27:17Z._
+_Auto-generated from `agents/memory/runs.jsonl` on 2026-02-26T21:52:39Z._
 
 ## Snapshot
-- Runs analyzed: 9
-- Success: 9
+- Runs analyzed: 23
+- Success: 23
 - Partial: 0
 - Failed: 0
 
 ## Common Tags
+- git (3)
+- automation (3)
 - tooling (2)
-- git (2)
-- automation (2)
 - skills (1)
 - automation,git,dashboard (1)
 - architecture,agents,adr (1)
@@ -29,12 +29,13 @@ _Auto-generated from `agents/memory/runs.jsonl` on 2026-02-25T05:27:17Z._
 ## Recent Runs
 | Timestamp (UTC) | Agent | Status | Summary |
 |---|---|---|---|
-| 2026-02-25T02:40:14Z | codex | success | Created shared instructions, two skills, and learning scripts. |
-| 2026-02-25T02:41:07Z | codex | success | Wrapper successfully logged and synthesized lessons. |
-| 2026-02-25T03:08:27Z | codex | success | Post-commit auto-log for 11fb620: Refactor environment configuration and update LLM provider handling |
-| 2026-02-25T03:09:18Z | codex | success | Implemented hook install flow and trend dashboard for run logs. |
-| 2026-02-25T04:15:19Z | codex | success | Updated agent instructions/skills to match route-model-service architecture and added ADRs for layering and SQLite-pr... |
-| 2026-02-25T04:59:59Z | codex | success | Rewrote docs/API_REFERENCE.md, docs/RAG_GUIDE.md, and docs/LLM_CONFIGURATION.md to match current routes, models, prov... |
-| 2026-02-25T05:10:02Z | codex | success | Post-commit auto-log for 6fa6d84: feat: Introduce SecondBrain Agent System with structured workflows and lessons |
-| 2026-02-25T05:22:22Z | codex | success | Implemented host allow-list, stronger auth defaults, secure headers, path traversal protection, sanitized 500 errors,... |
-| 2026-02-25T05:27:17Z | codex | success | Added /security/self-check route, security service with startup assertion for PUBLIC_API_MODE, and tests for service ... |
+| 2026-02-25T20:04:31Z | codex | success | Updated README and PROJECT_PROGRESS to match current providers, endpoint visibility rules, active routes, env var nam... |
+| 2026-02-25T20:20:36Z | codex | success | Added system_prompt support to /ask and /conversations create, persisted prompt as system message, applied prompt in ... |
+| 2026-02-25T20:26:29Z | codex | success | Added authenticated WS /ws/index/status endpoint with interval control, added websocket tests, and updated API/projec... |
+| 2026-02-25T22:57:15Z | codex | success | Added GET /graph/links endpoint with graph models/service, router wiring, auth-covered tests, and docs updates; marke... |
+| 2026-02-25T23:09:37Z | codex | success | Added /ask tuning fields (temperature/max_tokens/top_p/top_k), threaded through rag_service (sync+stream), added prov... |
+| 2026-02-25T23:10:25Z | codex | success | Implemented per-request /ask tuning fields (temperature/max_tokens/top_p/top_k), passed them through RAG sync+stream ... |
+| 2026-02-25T23:32:01Z | codex | success | Simplified README and PROJECT_PROGRESS, added docs index, removed duplicated/noisy content, and executed full reindex... |
+| 2026-02-26T21:47:07Z | codex | success | Added a concise AGENTS.md section defining when to ask for clarification and strict rules for durable memory updates. |
+| 2026-02-26T21:49:29Z | codex | success | Condensed AGENTS.md to non-obvious operating rules and trimmed PROJECT_PROGRESS.md to status/backlog plus links. |
+| 2026-02-26T21:52:36Z | codex | success | Labeled README/docs index as human docs, added agent-skip defaults, and encoded human-doc update requirements in AGEN... |

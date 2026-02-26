@@ -11,6 +11,7 @@ class ConversationCreate(BaseModel):
     """Request to create a conversation."""
     session_id: Optional[str] = None
     title: Optional[str] = None
+    system_prompt: Optional[str] = None
 
 
 class MessageCreate(BaseModel):

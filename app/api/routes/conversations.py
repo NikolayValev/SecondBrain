@@ -26,6 +26,7 @@ async def create_conversation(request: ConversationCreate):
         return await conversation_service.create(
             session_id=request.session_id,
             title=request.title,
+            system_prompt=request.system_prompt,
         )
     except EnvironmentError as e:
         raise HTTPException(status_code=503, detail=str(e))

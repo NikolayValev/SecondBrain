@@ -137,6 +137,41 @@ class TestLLMProviders:
             
             assert result == "Hello, I'm an AI assistant."
             mock_client.chat.completions.create.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_openai_provider_chat_forwards_model_and_top_p(self, monkeypatch):
+        """OpenAI provider should forward model override and top_p."""
+        from app import config
+        config.Config.LLM_PROVIDER = "openai"
+        config.Config.OPENAI_API_KEY = "test-key"
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "tuned response"
+
+        with patch("openai.AsyncOpenAI") as mock_client_class:
+            mock_client = MagicMock()
+            create_mock = AsyncMock(return_value=mock_response)
+            mock_client.chat.completions.create = create_mock
+            mock_client_class.return_value = mock_client
+
+            from app.llm import OpenAIProvider
+            provider = OpenAIProvider()
+
+            await provider.chat(
+                [{"role": "user", "content": "Hello"}],
+                model="gpt-4o-mini",
+                temperature=0.2,
+                max_tokens=111,
+                top_p=0.8,
+            )
+
+            create_mock.assert_called_once()
+            _, kwargs = create_mock.call_args
+            assert kwargs["model"] == "gpt-4o-mini"
+            assert kwargs["temperature"] == 0.2
+            assert kwargs["max_tokens"] == 111
+            assert kwargs["top_p"] == 0.8
     
     @pytest.mark.asyncio
     async def test_openai_provider_embed(self, monkeypatch):
@@ -188,6 +223,46 @@ class TestLLMProviders:
             ])
             
             assert result == "Hello from Ollama!"
+
+    @pytest.mark.asyncio
+    async def test_ollama_provider_chat_forwards_model_and_sampling_options(self, monkeypatch):
+        """Ollama provider should forward model override plus top_p/top_k options."""
+        from app import config
+        config.Config.LLM_PROVIDER = "ollama"
+        config.Config.OLLAMA_BASE_URL = "http://localhost:11434"
+        config.Config.OLLAMA_MODEL = "llama3"
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "message": {"content": "Hello from Ollama!"}
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = MagicMock()
+            post_mock = AsyncMock(return_value=mock_response)
+            mock_client.post = post_mock
+            mock_client_class.return_value = mock_client
+
+            from app.llm import OllamaProvider
+            provider = OllamaProvider()
+
+            await provider.chat(
+                [{"role": "user", "content": "Hello"}],
+                model="llama3.2:latest",
+                temperature=0.1,
+                max_tokens=123,
+                top_p=0.7,
+                top_k=20,
+            )
+
+            post_mock.assert_called_once()
+            _, kwargs = post_mock.call_args
+            assert kwargs["json"]["model"] == "llama3.2:latest"
+            assert kwargs["json"]["options"]["temperature"] == 0.1
+            assert kwargs["json"]["options"]["num_predict"] == 123
+            assert kwargs["json"]["options"]["top_p"] == 0.7
+            assert kwargs["json"]["options"]["top_k"] == 20
     
     @pytest.mark.asyncio
     async def test_ollama_provider_embed(self, monkeypatch):

@@ -41,5 +41,6 @@ python agents/skills/agent-retrospective/scripts/dashboard.py --window 100 --day
 - Log failures and partial results, not only successes.
 - Promote repeated lessons into shared instructions when they recur.
 - Create/update ADRs in `docs/adr/` when recurring issues are cross-cutting.
+- If behavior/config/ops changed, ensure human docs updates are called out (or explicitly logged as a gap).
 
 Use `references/rubric.md` to classify failures and improvement actions.
