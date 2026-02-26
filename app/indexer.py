@@ -97,7 +97,11 @@ class Indexer:
             # Create chunks for embedding
             db_sections = self.db.get_sections_by_file(file_id)
             if db_sections:
-                chunk_ids = embedding_service.create_chunks_for_file(file_id, db_sections)
+                chunk_ids = embedding_service.create_chunks_for_file(
+                    file_id,
+                    db_sections,
+                    database=self.db,
+                )
                 logger.debug(f"Created {len(chunk_ids)} chunks for {rel_path}")
 
                 # Auto-generate embeddings in background when event loop is running

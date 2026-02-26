@@ -9,7 +9,7 @@ import struct
 from typing import Optional
 
 from app.config import Config
-from app.db import db
+from app.db import db, Database
 from app.chunker import chunker, Chunk
 from app import llm
 
@@ -264,7 +264,8 @@ class EmbeddingService:
         self, 
         file_id: int, 
         sections: list[dict],
-        clear_existing: bool = True
+        clear_existing: bool = True,
+        database: Optional[Database] = None,
     ) -> list[int]:
         """
         Create chunks for a file from its sections.
@@ -277,14 +278,16 @@ class EmbeddingService:
         Returns:
             List of created chunk IDs.
         """
+        target_db = database or db
+
         if clear_existing:
-            db.clear_file_chunks(file_id)
+            target_db.clear_file_chunks(file_id)
         
         chunks = chunker.chunk_sections(sections, file_id)
         
         chunk_ids = []
         for chunk in chunks:
-            chunk_id = db.add_chunk(
+            chunk_id = target_db.add_chunk(
                 file_id=file_id,
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
