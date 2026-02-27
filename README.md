@@ -61,6 +61,7 @@ Runtime posture endpoint: `GET /security/self-check` (authenticated).
 
 - [Documentation Index](docs/README.md)
 - [API Reference](docs/API_REFERENCE.md)
+- [Frontend Implementation Guide](docs/FRONTEND_IMPLEMENTATION.md)
 - [Project Progress](docs/PROJECT_PROGRESS.md)
 - [LLM Configuration](docs/LLM_CONFIGURATION.md)
 - [RAG Guide](docs/RAG_GUIDE.md)

@@ -6,6 +6,7 @@
 ## Core Docs
 
 - [API Reference](./API_REFERENCE.md): endpoints, request/response shapes, auth behavior
+- [Frontend Implementation Guide](./FRONTEND_IMPLEMENTATION.md): required frontend integration scope and acceptance checklist
 - [Project Progress](./PROJECT_PROGRESS.md): current status and completed backlog
 - [RAG Guide](./RAG_GUIDE.md): retrieval/generation behavior
 - [LLM Configuration](./LLM_CONFIGURATION.md): provider setup and defaults

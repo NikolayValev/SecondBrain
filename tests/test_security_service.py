@@ -21,6 +21,13 @@ def _set_secure_public_defaults(monkeypatch):
     monkeypatch.setattr(config, "API_HOST", "127.0.0.1")
 
 
+def _check(report, name: str):
+    for check in report.checks:
+        if check.name == name:
+            return check
+    raise AssertionError(f"Missing check: {name}")
+
+
 def test_security_report_safe_in_public_mode(monkeypatch):
     _set_secure_public_defaults(monkeypatch)
     report = security_service.get_report()
@@ -72,3 +79,67 @@ def test_security_report_fails_when_request_limit_too_high_in_public_mode(monkey
     report = security_service.get_report()
     assert report.safe is False
     assert any(c.name == "max_request_bytes" and c.status == "fail" for c in report.checks)
+
+
+def test_security_report_fails_when_config_exposed_in_public_mode(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "EXPOSE_CONFIG_PUBLIC", True)
+    report = security_service.get_report()
+    check = _check(report, "expose_config_public")
+    assert report.safe is False
+    assert check.status == "fail"
+
+
+def test_security_report_fails_for_wildcard_allowed_hosts(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "ALLOWED_HOSTS", ["*"])
+    report = security_service.get_report()
+    check = _check(report, "allowed_hosts")
+    assert report.safe is False
+    assert check.status == "fail"
+
+
+def test_security_report_fails_when_public_mode_has_only_local_hosts(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "ALLOWED_HOSTS", ["127.0.0.1", "localhost"])
+    report = security_service.get_report()
+    check = _check(report, "allowed_hosts")
+    assert report.safe is False
+    assert check.status == "fail"
+
+
+def test_security_report_fails_for_wildcard_allowed_origins(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "ALLOWED_ORIGINS", ["*"])
+    report = security_service.get_report()
+    check = _check(report, "allowed_origins")
+    assert report.safe is False
+    assert check.status == "fail"
+
+
+def test_security_report_fails_for_credentialed_cors_in_public_mode(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "CORS_ALLOW_CREDENTIALS", True)
+    report = security_service.get_report()
+    check = _check(report, "cors_allow_credentials")
+    assert report.safe is False
+    assert check.status == "fail"
+
+
+def test_security_report_fails_when_public_mode_binds_non_local_host(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "API_HOST", "0.0.0.0")
+    report = security_service.get_report()
+    check = _check(report, "api_bind_host")
+    assert report.safe is False
+    assert check.status == "fail"
+
+
+def test_security_report_warns_when_docs_exposed_in_local_mode(monkeypatch):
+    _set_secure_public_defaults(monkeypatch)
+    monkeypatch.setattr(config, "PUBLIC_API_MODE", False)
+    monkeypatch.setattr(config, "EXPOSE_API_DOCS", True)
+    report = security_service.get_report()
+    check = _check(report, "expose_api_docs")
+    assert check.status == "warn"
+    assert report.warning_checks >= 1
